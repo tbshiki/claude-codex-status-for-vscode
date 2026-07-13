@@ -54,6 +54,20 @@ export class ProviderNotReadyError extends Error {
   }
 }
 
+/**
+ * レート制限(HTTP 429)を受けた場合に投げる。
+ * retryAfterMs が分かれば表示側はそれだけバックオフする。
+ */
+export class RateLimitError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs?: number
+  ) {
+    super(message);
+    this.name = 'RateLimitError';
+  }
+}
+
 export interface UsageProvider {
   readonly id: ProviderId;
   /** ステータスバーに出す短いラベル(例: "Claude")。 */
