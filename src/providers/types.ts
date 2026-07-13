@@ -6,18 +6,30 @@
 
 export type ProviderId = 'claude' | 'codex';
 
-export interface WindowUsage {
-  /** 利用率(0-100)。 */
+/**
+ * 個々の制限枠(セッション/週/モデル別週など)を正規化したもの。
+ * API の `limits` 配列に対応し、モデルスコープ枠(Fable 等)も同じ形で表す。
+ */
+export interface UsageLimit {
+  /** ツールチップ用の表示名(例: "セッション(5h)", "週(Fable)")。 */
+  label: string;
+  /** ステータスバー用の短縮ラベル(例: "5h", "7d", "Fable7d")。 */
+  shortLabel: string;
+  /** 利用率(0-100、使用済みの割合)。 */
   utilization: number;
-  /** ISO8601 文字列、または不明な場合は null。 */
+  /** ISO8601 文字列、または不明・未設定の場合は null。 */
   resetsAt: string | null;
+  /** 主要枠(セッション/週全体)。バーに常時表示する。 */
+  primary: boolean;
+  /** 消費が始まっている等、現在有効な枠か(バー表示の判断に使う)。 */
+  active: boolean;
+  /** severity(normal/warning/critical 等)。参考情報。 */
+  severity: string;
 }
 
 export interface ProviderUsage {
-  /** 5時間枠。 */
-  fiveHour: WindowUsage;
-  /** 週枠(7日)。 */
-  sevenDay: WindowUsage;
+  /** 制限枠の一覧。並び順は API のまま(主要枠が先頭)。 */
+  limits: UsageLimit[];
 }
 
 /**

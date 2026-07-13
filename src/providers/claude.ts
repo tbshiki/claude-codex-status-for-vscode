@@ -6,23 +6,37 @@ import * as os from 'os';
 import {
   NotAuthenticatedError,
   ProviderUsage,
+  UsageLimit,
   UsageProvider,
-  WindowUsage,
 } from './types';
 
 /** api.anthropic.com が返す生レスポンス(非公式・非保証)。 */
-interface RawWindowUsage {
-  utilization: number;
-  resets_at: string | null;
+interface RawLimit {
+  kind?: string;
+  group?: string;
+  percent?: number;
+  severity?: string;
+  resets_at?: string | null;
+  is_active?: boolean;
+  scope?: {
+    model?: { id?: string | null; display_name?: string | null } | null;
+    surface?: unknown;
+  } | null;
+}
+
+interface RawWindow {
+  utilization?: number;
+  resets_at?: string | null;
 }
 
 interface RawUsageResponse {
-  five_hour: RawWindowUsage;
-  seven_day: RawWindowUsage;
+  five_hour?: RawWindow;
+  seven_day?: RawWindow;
+  limits?: RawLimit[];
 }
 
 /**
- * Claude Code の OAuth 認証情報を使い、5時間枠/週枠の利用率を取得する。
+ * Claude Code の OAuth 認証情報を使い、レート制限枠の利用率を取得する。
  * エンドポイントとヘッダは非公式のため、失敗時は例外に委ねてフェイルソフトにする。
  */
 export class ClaudeProvider implements UsageProvider {
@@ -32,10 +46,7 @@ export class ClaudeProvider implements UsageProvider {
 
   async fetchUsage(): Promise<ProviderUsage> {
     const raw = (await this.fetchRaw()) as RawUsageResponse;
-    return {
-      fiveHour: normalizeWindow(raw.five_hour),
-      sevenDay: normalizeWindow(raw.seven_day),
-    };
+    return { limits: toLimits(raw) };
   }
 
   /**
@@ -110,9 +121,66 @@ export class ClaudeProvider implements UsageProvider {
   }
 }
 
-function normalizeWindow(raw: RawWindowUsage | undefined): WindowUsage {
-  return {
-    utilization: Math.round(raw?.utilization ?? 0),
-    resetsAt: raw?.resets_at ?? null,
-  };
+/**
+ * 生レスポンスを UsageLimit[] へ正規化する。
+ * 新しい `limits` 配列があればそれを正とし、無ければ旧来の
+ * five_hour / seven_day へフォールバックする(フェイルソフト)。
+ */
+function toLimits(raw: RawUsageResponse): UsageLimit[] {
+  if (Array.isArray(raw.limits) && raw.limits.length > 0) {
+    return raw.limits.map(mapLimit);
+  }
+  return legacyLimits(raw);
+}
+
+function mapLimit(l: RawLimit): UsageLimit {
+  const utilization = Math.round(l.percent ?? 0);
+  const resetsAt = l.resets_at ?? null;
+  const active = l.is_active ?? false;
+  const severity = l.severity ?? 'normal';
+  const model = l.scope?.model?.display_name ?? undefined;
+
+  switch (l.kind) {
+    case 'session':
+      return limit('セッション(5h)', '5h', utilization, resetsAt, true, active, severity);
+    case 'weekly_all':
+      return limit('週(全体)', '7d', utilization, resetsAt, true, active, severity);
+    case 'weekly_scoped':
+      if (model) {
+        return limit(`週(${model})`, `${model}7d`, utilization, resetsAt, false, active, severity);
+      }
+      return limit('週(スコープ)', 'wk', utilization, resetsAt, false, active, severity);
+    default: {
+      // 未知の種類も表示だけはできるよう拾う(フェイルソフト)。
+      const name = model ?? l.kind ?? '不明';
+      return limit(name, name, utilization, resetsAt, false, active, severity);
+    }
+  }
+}
+
+function legacyLimits(raw: RawUsageResponse): UsageLimit[] {
+  const out: UsageLimit[] = [];
+  if (raw.five_hour) {
+    out.push(
+      limit('セッション(5h)', '5h', Math.round(raw.five_hour.utilization ?? 0), raw.five_hour.resets_at ?? null, true, true, 'normal')
+    );
+  }
+  if (raw.seven_day) {
+    out.push(
+      limit('週(全体)', '7d', Math.round(raw.seven_day.utilization ?? 0), raw.seven_day.resets_at ?? null, true, true, 'normal')
+    );
+  }
+  return out;
+}
+
+function limit(
+  label: string,
+  shortLabel: string,
+  utilization: number,
+  resetsAt: string | null,
+  primary: boolean,
+  active: boolean,
+  severity: string
+): UsageLimit {
+  return { label, shortLabel, utilization, resetsAt, primary, active, severity };
 }
