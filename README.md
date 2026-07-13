@@ -27,11 +27,11 @@ src/
   providers/
     types.ts            # プロバイダ共通の型と例外
     claude.ts           # Claude の残量取得(実装済み)
-    codex.ts            # Codex の残量取得(スタブ、M2で実装)
+    codex.ts            # Codex のローカル認証情報から残量を取得
 docs/requirements.md    # 要件定義書
 ```
 
-現状は **Claude 単体表示**が動作します（マイルストーン M1）。Codex はプロバイダ抽象の枠だけ用意した準備中状態で、`docs/requirements.md` の方式（ログ受動監視 / `app-server` 連携）を M2 で実装します。
+Claude と Codex の両方を表示できます（マイルストーン M2）。Codex は `~/.codex/auth.json` の認証情報を使い、使用状況 API から直接取得します。Codex CLI の API 変更や認証期限切れなどで取得できない場合は、直近値を保持します。
 
 ## AI 開発基盤
 
