@@ -14,6 +14,16 @@
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "信頼されていないワークスペースでも動作しますが、認証情報ファイルのパス設定はユーザー設定の値のみ使用します。",
+      "restrictedConfigurations": [
+        "claudeCodexStatus.claude.credentialsPath",
+        "claudeCodexStatus.codex.authPath"
+      ]
+    }
+  },
   "contributes": {
     "commands": [
       {
@@ -63,11 +73,13 @@
         "claudeCodexStatus.claude.credentialsPath": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Claude の credentials.json のパスを明示指定する場合に設定します(通常は空欄でOK)。"
         },
         "claudeCodexStatus.codex.authPath": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Codex の auth.json のパスを明示指定する場合に設定します(通常は空欄でOK)。"
         },
         "claudeCodexStatus.style": {
