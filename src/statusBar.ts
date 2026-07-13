@@ -30,9 +30,9 @@ export class StatusBarManager {
   private readonly item: vscode.StatusBarItem;
   private readonly toggleItem: vscode.StatusBarItem;
   private readonly states = new Map<ProviderId, ProviderStatus>();
+  private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
   private pollTimer: NodeJS.Timeout | undefined;
-  private monitoringEnabled = true;
 
   constructor(private readonly providers: UsageProvider[]) {
     this.item = vscode.window.createStatusBarItem(
@@ -47,6 +47,7 @@ export class StatusBarManager {
     this.toggleItem.command = 'claudeCodexStatus.toggleMonitoring';
     for (const p of providers) {
       this.states.set(p.id, { kind: 'loading' });
+      this.monitoringEnabled.set(p.id, true);
     }
   }
 
@@ -71,7 +72,7 @@ export class StatusBarManager {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
-    if (!this.monitoringEnabled) {
+    if (!this.providers.some((p) => this.isMonitoringEnabled(p.id))) {
       this.renderToggle();
       return;
     }
@@ -86,14 +87,26 @@ export class StatusBarManager {
 
   /** Claude / Codex の自動監視を一括で停止・再開する。 */
   toggleMonitoring(): void {
-    this.monitoringEnabled = !this.monitoringEnabled;
+    const enable = this.providers.some((p) => !this.isMonitoringEnabled(p.id));
+    for (const provider of this.providers) {
+      this.monitoringEnabled.set(provider.id, enable);
+    }
+    this.restartPolling();
+    this.render();
+  }
+
+  /** 指定プロバイダの自動監視だけを停止・再開する。 */
+  toggleProviderMonitoring(id: ProviderId): void {
+    this.monitoringEnabled.set(id, !this.isMonitoringEnabled(id));
     this.restartPolling();
     this.render();
   }
 
   /** id を省略すると有効な全プロバイダを更新する。 */
   async refresh(id?: ProviderId): Promise<void> {
-    const targets = this.enabledProviders().filter((p) => !id || p.id === id);
+    const targets = this.enabledProviders().filter(
+      (p) => (!id && this.isMonitoringEnabled(p.id)) || (id && p.id === id)
+    );
     await Promise.all(targets.map((p) => this.refreshOne(p)));
     this.render();
   }
@@ -205,11 +218,15 @@ export class StatusBarManager {
     }
   }
 
-  private renderTooltip(enabled: UsageProvider[]): string {
+  private renderTooltip(enabled: UsageProvider[]): vscode.MarkdownString {
     const lines: string[] = [];
     for (const provider of enabled) {
       const state = this.states.get(provider.id) ?? { kind: 'loading' };
-      lines.push(`■ ${provider.label}`);
+      const action = this.isMonitoringEnabled(provider.id) ? '停止' : '再開';
+      const command = provider.id === 'claude'
+        ? 'claudeCodexStatus.toggleClaudeMonitoring'
+        : 'claudeCodexStatus.toggleCodexMonitoring';
+      lines.push(`■ ${provider.label}　[監視を${action}](command:${command})`);
       switch (state.kind) {
         case 'loading':
           lines.push('  取得中…');
@@ -251,14 +268,21 @@ export class StatusBarManager {
     }
     lines.push('クリックで今すぐ更新');
 
-    return lines.join('\n');
+    const tooltip = new vscode.MarkdownString(lines.join('\n'));
+    tooltip.isTrusted = true;
+    return tooltip;
   }
 
   private renderToggle(): void {
-    this.toggleItem.text = this.monitoringEnabled ? '$(debug-pause)' : '$(play)';
-    this.toggleItem.tooltip = this.monitoringEnabled
+    const allEnabled = this.providers.every((p) => this.isMonitoringEnabled(p.id));
+    this.toggleItem.text = allEnabled ? '$(debug-pause)' : '$(play)';
+    this.toggleItem.tooltip = allEnabled
       ? 'Claude / Codex の自動監視を停止'
-      : 'Claude / Codex の自動監視を再開';
+      : 'Claude / Codex の自動監視を再開（ホバー詳細から個別変更できます）';
+  }
+
+  private isMonitoringEnabled(id: ProviderId): boolean {
+    return this.monitoringEnabled.get(id) ?? true;
   }
 }
 
