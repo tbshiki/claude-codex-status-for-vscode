@@ -83,7 +83,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
-    "package": "vsce package --no-yarn"
+    "package": "node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && vsce package --no-yarn --out dist/ && node scripts/prune-vsix.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
