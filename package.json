@@ -1,0 +1,77 @@
+{
+  "name": "claude-codex-status",
+  "displayName": "Claude & Codex Status",
+  "description": "Claude Code と OpenAI Codex CLI のレート残量(5時間枠/週枠)をVSCodeのステータスバーに常時表示します",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeCodexStatus.refresh",
+        "title": "Claude & Codex: 今すぐ更新"
+      },
+      {
+        "command": "claudeCodexStatus.refreshClaude",
+        "title": "Claude & Codex: Claudeのみ更新"
+      },
+      {
+        "command": "claudeCodexStatus.refreshCodex",
+        "title": "Claude & Codex: Codexのみ更新"
+      }
+    ],
+    "configuration": {
+      "title": "Claude & Codex Status",
+      "properties": {
+        "claudeCodexStatus.pollIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 30,
+          "description": "残量を取得する間隔(秒)。短すぎると429エラーになる可能性があります(下限30秒)。"
+        },
+        "claudeCodexStatus.providers.claude": {
+          "type": "boolean",
+          "default": true,
+          "description": "Claude の残量をステータスバーに表示します。"
+        },
+        "claudeCodexStatus.providers.codex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Codex の残量をステータスバーに表示します(現在は準備中)。"
+        },
+        "claudeCodexStatus.claude.credentialsPath": {
+          "type": "string",
+          "default": "",
+          "description": "Claude の credentials.json のパスを明示指定する場合に設定します(通常は空欄でOK)。"
+        },
+        "claudeCodexStatus.codex.authPath": {
+          "type": "string",
+          "default": "",
+          "description": "Codex の auth.json のパスを明示指定する場合に設定します(通常は空欄でOK)。"
+        },
+        "claudeCodexStatus.style": {
+          "type": "string",
+          "enum": ["minimal", "verbose"],
+          "default": "minimal",
+          "description": "ステータスバーの表示スタイル。minimal は利用率のみ、verbose はリセット残り時間も表示します。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "package": "vsce package --allow-missing-repository --no-yarn"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^2.24.0"
+  }
+}

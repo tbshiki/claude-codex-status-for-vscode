@@ -3,9 +3,35 @@
 Claude Code と OpenAI Codex CLI のレートリミット残量（5時間枠・週枠）を VSCode のステータスバーに常時表示する拡張機能です。確認のためにブラウザや別コマンドへ離脱することなく、作業フローを保ったまま残量を把握できます。
 
 - 技術スタック: TypeScript + VSCode Extension API（ビルド `tsc`、パッケージング `@vscode/vsce`）
-- 詳細な仕様: [`claude-codex-status-for-vscode-requirements.md`](claude-codex-status-for-vscode-requirements.md)
+- 詳細な仕様: [`docs/requirements.md`](docs/requirements.md)
 
 > 取得に使うエンドポイントやログ形式は非公式・非保証です。仕様変更で動作しなくなる前提のフェイルソフト設計を採用します。
+
+## 開発
+
+```powershell
+npm install       # 依存関係の取得(初回のみ)
+npm run compile   # tsc で out/ へビルド
+npm run watch     # 変更を監視してビルド
+npm run package   # vsce で .vsix を生成
+```
+
+VS Code で `F5`（拡張機能のデバッグ実行）を押すと、拡張機能ホストが起動しステータスバーに残量が表示されます。
+
+### 構成
+
+```text
+src/
+  extension.ts          # activate/deactivate、コマンド・設定変更の配線
+  statusBar.ts          # ステータスバーへの統合表示とポーリング
+  providers/
+    types.ts            # プロバイダ共通の型と例外
+    claude.ts           # Claude の残量取得(実装済み)
+    codex.ts            # Codex の残量取得(スタブ、M2で実装)
+docs/requirements.md    # 要件定義書
+```
+
+現状は **Claude 単体表示**が動作します（マイルストーン M1）。Codex はプロバイダ抽象の枠だけ用意した準備中状態で、`docs/requirements.md` の方式（ログ受動監視 / `app-server` 連携）を M2 で実装します。
 
 ## AI 開発基盤
 
