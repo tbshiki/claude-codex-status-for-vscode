@@ -21,6 +21,11 @@ const MIN_INTERVAL_SEC = 60;
 /** 429 バックオフの基準(初回)と上限。Retry-After があればそちらを優先。 */
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_CAP_MS = 15 * 60_000;
+/**
+ * 手動更新の最小間隔。手動はバックオフを無視して再取得できるため、
+ * 連打してもこの間隔以下ではリクエストを送らないことで負荷を抑える。
+ */
+const MANUAL_MIN_INTERVAL_MS = 15_000;
 
 /**
  * 複数プロバイダの残量を1つのステータスバー項目に統合表示する。
@@ -31,6 +36,7 @@ export class StatusBarManager {
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
+  private readonly lastManualAttempt = new Map<ProviderId, number>();
   private pollTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly providers: UsageProvider[]) {
@@ -83,12 +89,17 @@ export class StatusBarManager {
     this.render();
   }
 
-  /** id を省略すると有効な全プロバイダを更新する。 */
-  async refresh(id?: ProviderId): Promise<void> {
+  /**
+   * id を省略すると有効な全プロバイダを更新する。
+   * manual(コマンド・クリック起点)の場合はバックオフや監視停止を無視して
+   * 再取得を試みるが、MANUAL_MIN_INTERVAL_MS より短い間隔では送信しない。
+   */
+  async refresh(id?: ProviderId, opts?: { manual?: boolean }): Promise<void> {
+    const manual = opts?.manual ?? false;
     const targets = this.enabledProviders().filter(
-      (p) => (!id && this.isMonitoringEnabled(p.id)) || (id && p.id === id)
+      (p) => (!id && (manual || this.isMonitoringEnabled(p.id))) || (id && p.id === id)
     );
-    await Promise.all(targets.map((p) => this.refreshOne(p)));
+    await Promise.all(targets.map((p) => this.refreshOne(p, manual)));
     this.render();
   }
 
@@ -96,13 +107,15 @@ export class StatusBarManager {
     await this.refresh();
   }
 
-  private async refreshOne(provider: UsageProvider): Promise<void> {
+  private async refreshOne(provider: UsageProvider, manual = false): Promise<void> {
     const prev = this.states.get(provider.id);
     const { usage: last, at: lastFetchedAt } = lastGood(prev);
+    const now = Date.now();
 
     // バックオフ中は API を叩かず、待機状態のまま据え置く(Claude 側の負荷を避ける)。
+    // 手動更新だけは待機が長い場合の救済としてバックオフを突破できる。
     const b = this.backoff.get(provider.id);
-    if (b && Date.now() < b.until) {
+    if (!manual && b && now < b.until) {
       this.states.set(provider.id, {
         kind: 'rateLimited',
         retryAt: b.until,
@@ -110,6 +123,21 @@ export class StatusBarManager {
         lastFetchedAt,
       });
       return;
+    }
+
+    if (manual) {
+      const lastAttempt = this.lastManualAttempt.get(provider.id);
+      if (lastAttempt !== undefined && now - lastAttempt < MANUAL_MIN_INTERVAL_MS) {
+        const waitSec = Math.ceil(
+          (MANUAL_MIN_INTERVAL_MS - (now - lastAttempt)) / 1000
+        );
+        vscode.window.setStatusBarMessage(
+          `${provider.label}: 直前に更新済みです。約${waitSec}秒後に再試行できます`,
+          3000
+        );
+        return;
+      }
+      this.lastManualAttempt.set(provider.id, now);
     }
 
     try {
@@ -228,7 +256,8 @@ export class StatusBarManager {
           break;
         case 'rateLimited': {
           const secs = Math.max(0, Math.ceil((state.retryAt - Date.now()) / 1000));
-          appendLine(`  レート制限(429)中: 約${secs}秒後に再取得します`);
+          appendLine(`  レート制限(429)中: 約${secs}秒後に自動再取得します`);
+          appendLine('  (クリックで今すぐ再試行できます)');
           if (state.last) {
             appendLine('  直近の正常値:');
             for (const line of tooltipLimits(state.last)) appendLine(line);
