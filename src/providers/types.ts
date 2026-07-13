@@ -25,6 +25,8 @@ export interface UsageLimit {
   active: boolean;
   /** severity(normal/warning/critical 等)。参考情報。 */
   severity: string;
+  /** 利用率ではなく残量を表示する枠。 */
+  percentageKind?: 'used' | 'remaining';
 }
 
 export interface ProviderUsage {

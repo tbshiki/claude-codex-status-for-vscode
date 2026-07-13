@@ -64,8 +64,8 @@ export function normalizeCodexUsage(raw: unknown): ProviderUsage {
 
 function normalizeWhamUsage(raw: Record<string, any>): ProviderUsage {
   const limits: UsageLimit[] = [];
-  appendWhamWindow(limits, raw.primary_window, '5h', 'セッション(5h)', true);
-  appendWhamWindow(limits, raw.secondary_window, '7d', '週', false);
+  appendWhamWindow(limits, raw.primary_window, true);
+  appendWhamWindow(limits, raw.secondary_window, false);
   if (limits.length === 0) {
     throw new Error('Codex の利用状況にレート制限枠がありません');
   }
@@ -75,22 +75,30 @@ function normalizeWhamUsage(raw: Record<string, any>): ProviderUsage {
 function appendWhamWindow(
   limits: UsageLimit[],
   value: unknown,
-  shortLabel: string,
-  label: string,
   primary: boolean
 ): void {
   if (!isRecord(value) || typeof value.used_percent !== 'number') {
     return;
   }
-  const utilization = clampPercent(value.used_percent);
+  const usedPercent = clampPercent(value.used_percent);
+  const windowSeconds = typeof value.limit_window_seconds === 'number' && value.limit_window_seconds > 0
+    ? value.limit_window_seconds
+    : undefined;
+  const isFiveHour = primary && windowSeconds === 18_000;
+  const isSevenDay = !primary && windowSeconds === 604_800;
+  const shortLabel = isFiveHour ? '5h' : isSevenDay ? '7d' : primary ? '全体' : '7d';
+  const label = isFiveHour ? 'セッション(5h)' : isSevenDay ? '週' : primary ? '全体' : '週';
+  const resetsAt = toIsoTimestamp(value.reset_at) ?? toIsoTimestampAfter(value.reset_after_seconds);
+  const remainingPercent = 100 - usedPercent;
   limits.push({
     label,
     shortLabel,
-    utilization,
-    resetsAt: toIsoTimestamp(value.reset_at),
+    utilization: remainingPercent,
+    resetsAt,
     primary,
-    active: utilization > 0,
-    severity: severityFor(utilization),
+    active: remainingPercent < 100,
+    severity: severityFor(usedPercent),
+    percentageKind: 'remaining',
   });
 }
 
@@ -205,7 +213,7 @@ async function requestWhamUsage(auth: { accessToken: string; accountId?: string 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${auth.accessToken}`,
       Accept: 'application/json',
-      'User-Agent': 'claude-codex-status/0.1.7',
+      'User-Agent': 'claude-codex-status/0.1.11',
     };
     if (auth.accountId) {
       headers['ChatGPT-Account-Id'] = auth.accountId;
@@ -249,6 +257,13 @@ function toIsoTimestamp(value: unknown): string | null {
   }
   const date = new Date(value * 1000);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function toIsoTimestampAfter(value: unknown): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return new Date(Date.now() + value * 1000).toISOString();
 }
 
 function clampPercent(value: number): number {

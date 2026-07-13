@@ -23,6 +23,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claudeCodexStatus.refreshCodex', () =>
       status.refresh('codex')
     ),
+    vscode.commands.registerCommand('claudeCodexStatus.toggleClaudeMonitoring', () =>
+      status.toggleProviderMonitoring('claude')
+    ),
+    vscode.commands.registerCommand('claudeCodexStatus.toggleCodexMonitoring', () =>
+      status.toggleProviderMonitoring('codex')
+    ),
     vscode.commands.registerCommand('claudeCodexStatus.showRawUsage', () =>
       showRawUsage(claude, diagnostics)
     ),
