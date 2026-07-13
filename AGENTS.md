@@ -6,7 +6,7 @@
 
 - VSCode 拡張機能「Claude & Codex Status」。Claude Code と OpenAI Codex CLI のレートリミット残量をステータスバーに常時表示する。
 - 技術スタック: TypeScript + VSCode Extension API。ビルドは `tsc`、パッケージングは `@vscode/vsce`。
-- 詳細な仕様は `claude-codex-status-for-vscode-requirements.md` を参照する。
+- 詳細な仕様は `docs/requirements.md` を参照する。
 - 非公式 API・ログ形式へ依存するため、取得ロジックは抽象化し、フェイルソフト（取得失敗時も直近値を保持しクラッシュしない）を必須とする。
 
 ## コミュニケーション

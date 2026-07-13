@@ -1,0 +1,23 @@
+# Source and build config (compiled output in out/ is shipped instead)
+src/**
+tsconfig.json
+**/*.ts
+**/*.map
+
+# AI development workspace (not part of the extension package)
+.agents/**
+.claude/**
+skills/**
+scripts/**
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+
+# Repo meta and docs
+.vscode/**
+.git/**
+.gitignore
+.gitattributes
+.editorconfig
+docs/**
+*.code-workspace
