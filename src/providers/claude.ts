@@ -31,17 +31,26 @@ export class ClaudeProvider implements UsageProvider {
   readonly icon = '$(pulse)';
 
   async fetchUsage(): Promise<ProviderUsage> {
+    const raw = (await this.fetchRaw()) as RawUsageResponse;
+    return {
+      fiveHour: normalizeWindow(raw.five_hour),
+      sevenDay: normalizeWindow(raw.seven_day),
+    };
+  }
+
+  /**
+   * 使用状況エンドポイントの生レスポンス(パース済み)を返す。
+   * どのウィンドウやフィールドが実際に含まれるかを診断するために使う。
+   * レスポンス本体にトークンは含まれない。
+   */
+  async fetchRaw(): Promise<unknown> {
     const token = this.readAccessToken();
     if (!token) {
       throw new NotAuthenticatedError(
         'credentials.json からトークンを取得できませんでした。claude login を確認してください。'
       );
     }
-    const raw = await this.request(token);
-    return {
-      fiveHour: normalizeWindow(raw.five_hour),
-      sevenDay: normalizeWindow(raw.seven_day),
-    };
+    return this.request(token);
   }
 
   private getCredentialsPath(): string {
@@ -64,7 +73,7 @@ export class ClaudeProvider implements UsageProvider {
     }
   }
 
-  private request(token: string): Promise<RawUsageResponse> {
+  private request(token: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const req = https.request(
         {
@@ -84,7 +93,7 @@ export class ClaudeProvider implements UsageProvider {
             const status = res.statusCode ?? 0;
             if (status >= 200 && status < 300) {
               try {
-                resolve(JSON.parse(data) as RawUsageResponse);
+                resolve(JSON.parse(data));
               } catch {
                 reject(new Error('レスポンスのJSON解析に失敗しました'));
               }

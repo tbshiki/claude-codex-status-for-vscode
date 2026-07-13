@@ -2,7 +2,7 @@
   "name": "claude-codex-status",
   "displayName": "Claude & Codex Status",
   "description": "Claude Code と OpenAI Codex CLI のレート残量(5時間枠/週枠)をVSCodeのステータスバーに常時表示します",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -27,6 +27,10 @@
       {
         "command": "claudeCodexStatus.refreshCodex",
         "title": "Claude & Codex: Codexのみ更新"
+      },
+      {
+        "command": "claudeCodexStatus.showRawUsage",
+        "title": "Claude & Codex: 生の使用状況を表示(診断)"
       }
     ],
     "configuration": {
