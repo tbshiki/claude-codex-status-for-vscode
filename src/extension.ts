@@ -15,13 +15,13 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     diagnostics,
     vscode.commands.registerCommand('claudeCodexStatus.refresh', () =>
-      status.refresh()
+      status.refresh(undefined, { manual: true })
     ),
     vscode.commands.registerCommand('claudeCodexStatus.refreshClaude', () =>
-      status.refresh('claude')
+      status.refresh('claude', { manual: true })
     ),
     vscode.commands.registerCommand('claudeCodexStatus.refreshCodex', () =>
-      status.refresh('codex')
+      status.refresh('codex', { manual: true })
     ),
     vscode.commands.registerCommand('claudeCodexStatus.toggleClaudeMonitoring', () =>
       status.toggleProviderMonitoring('claude')
