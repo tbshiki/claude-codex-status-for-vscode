@@ -146,7 +146,7 @@ function mapLimit(l: RawLimit): UsageLimit {
   const resetsAt = l.resets_at ?? null;
   const active = l.is_active ?? false;
   const severity = l.severity ?? 'normal';
-  const model = l.scope?.model?.display_name ?? undefined;
+  const model = sanitizeApiText(l.scope?.model?.display_name);
 
   switch (l.kind) {
     case 'session':
@@ -160,10 +160,22 @@ function mapLimit(l: RawLimit): UsageLimit {
       return limit('週(スコープ)', 'wk', utilization, resetsAt, false, active, severity);
     default: {
       // 未知の種類も表示だけはできるよう拾う(フェイルソフト)。
-      const name = model ?? l.kind ?? '不明';
+      const name = model ?? sanitizeApiText(l.kind) ?? '不明';
       return limit(name, name, utilization, resetsAt, false, active, severity);
     }
   }
+}
+
+/**
+ * API 由来の表示用文字列から制御文字・改行を除き、表示崩れしない長さへ丸める。
+ * Markdown 記法のエスケープは表示側(statusBar)で行う。
+ */
+function sanitizeApiText(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const cleaned = value.replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim().slice(0, 64).trim();
+  return cleaned.length > 0 ? cleaned : undefined;
 }
 
 function legacyLimits(raw: RawUsageResponse): UsageLimit[] {
