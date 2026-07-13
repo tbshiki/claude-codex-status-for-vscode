@@ -340,12 +340,17 @@ function usageCell(l: UsageLimit): string {
   if (pct === '-%') {
     return '-';
   }
+  // メーターは常に「残量を塗り、使用分を中抜き」で統一する。
+  // Codex は utilization が残量率(100-使用)、Claude は使用率なので変換する。
+  const remaining =
+    l.percentageKind === 'remaining' ? l.utilization : 100 - l.utilization;
   const kind = l.percentageKind === 'remaining' ? '残量' : '使用';
-  return `${meter(l.utilization)} ${kind} ${pct}${severityIcon(l.severity)}`;
+  return `${meter(remaining)} ${kind} ${pct}${severityIcon(l.severity)}`;
 }
 
-function meter(percent: number): string {
-  const filled = Math.max(0, Math.min(10, Math.round(percent / 10)));
+/** 残量率(0-100)を10段の「▰(残)▱(使用済)」バーにする。 */
+function meter(remainingPercent: number): string {
+  const filled = Math.max(0, Math.min(10, Math.round(remainingPercent / 10)));
   return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
 }
 
