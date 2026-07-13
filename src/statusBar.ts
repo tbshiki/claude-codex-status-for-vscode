@@ -28,9 +28,11 @@ const BACKOFF_CAP_MS = 15 * 60_000;
  */
 export class StatusBarManager {
   private readonly item: vscode.StatusBarItem;
+  private readonly toggleItem: vscode.StatusBarItem;
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
   private pollTimer: NodeJS.Timeout | undefined;
+  private monitoringEnabled = true;
 
   constructor(private readonly providers: UsageProvider[]) {
     this.item = vscode.window.createStatusBarItem(
@@ -38,6 +40,11 @@ export class StatusBarManager {
       100
     );
     this.item.command = 'claudeCodexStatus.refresh';
+    this.toggleItem = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      101
+    );
+    this.toggleItem.command = 'claudeCodexStatus.toggleMonitoring';
     for (const p of providers) {
       this.states.set(p.id, { kind: 'loading' });
     }
@@ -45,6 +52,7 @@ export class StatusBarManager {
 
   start(): void {
     this.item.show();
+    this.toggleItem.show();
     this.restartPolling();
   }
 
@@ -54,12 +62,18 @@ export class StatusBarManager {
       this.pollTimer = undefined;
     }
     this.item.dispose();
+    this.toggleItem.dispose();
   }
 
   /** 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。 */
   restartPolling(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+    if (!this.monitoringEnabled) {
+      this.renderToggle();
+      return;
     }
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
     const intervalSec = Math.max(
@@ -68,6 +82,13 @@ export class StatusBarManager {
     );
     void this.refreshAll();
     this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
+  }
+
+  /** Claude / Codex の自動監視を一括で停止・再開する。 */
+  toggleMonitoring(): void {
+    this.monitoringEnabled = !this.monitoringEnabled;
+    this.restartPolling();
+    this.render();
   }
 
   /** id を省略すると有効な全プロバイダを更新する。 */
@@ -145,9 +166,12 @@ export class StatusBarManager {
     const enabled = this.enabledProviders();
     if (enabled.length === 0) {
       this.item.hide();
+      this.toggleItem.hide();
       return;
     }
     this.item.show();
+    this.toggleItem.show();
+    this.renderToggle();
 
     const verbose =
       vscode.workspace
@@ -228,6 +252,13 @@ export class StatusBarManager {
     lines.push('クリックで今すぐ更新');
 
     return lines.join('\n');
+  }
+
+  private renderToggle(): void {
+    this.toggleItem.text = this.monitoringEnabled ? '$(debug-pause)' : '$(play)';
+    this.toggleItem.tooltip = this.monitoringEnabled
+      ? 'Claude / Codex の自動監視を停止'
+      : 'Claude / Codex の自動監視を再開';
   }
 }
 

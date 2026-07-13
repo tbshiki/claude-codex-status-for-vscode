@@ -29,6 +29,10 @@
         "title": "Claude & Codex: Codexのみ更新"
       },
       {
+        "command": "claudeCodexStatus.toggleMonitoring",
+        "title": "Claude & Codex: 自動監視を停止／再開"
+      },
+      {
         "command": "claudeCodexStatus.showRawUsage",
         "title": "Claude & Codex: 生の使用状況を表示(診断)"
       }
