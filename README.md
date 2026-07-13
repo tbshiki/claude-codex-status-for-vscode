@@ -30,13 +30,3 @@ VS Code でフォルダを開くと `AI: Sync skill symlinks` タスクが自動
 ### ヘルスチェック
 
 `scripts/check-ai-config.ps1` は、正典ファイル、Claude Code 設定の JSON、各スキル、symlink のリンク先、Git 管理対象に秘密情報らしいファイルがないことを検証します。失敗時は `[FAIL]` と理由を表示し、終了コード 1 を返します。
-
-### Dropbox へのコピー（任意）
-
-現在のワークスペースを Dropbox 配下などへ受け渡し用にコピーできます。`Ctrl+Shift+B` から `Dropbox: Copy workspace (overwrite)` / `Dropbox: Copy workspace (clean)` を選ぶか、次を実行します。`clean` は指定フォルダを削除してからコピーする破壊的操作です。パスを確認してから実行してください。
-
-```powershell
-.\scripts\copy-workspace-to-dropbox.ps1 -DestinationRoot "D:\Dropbox\Git"
-```
-
-このコピーは `.git` とGit管理外の機密ファイルを含む一方、`node_modules`、`out`、`*.vsix` などの再生成可能な生成物と、再生成可能な symlink は除外します。Dropbox の共有範囲を確認し、信頼できる共有先だけで利用してください。世代管理バックアップの代わりにはなりません。
