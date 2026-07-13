@@ -155,7 +155,7 @@ function mapLimit(l: RawLimit): UsageLimit {
       return limit('週(全体)', '7d', utilization, resetsAt, true, active, severity);
     case 'weekly_scoped':
       if (model) {
-        return limit(`週(${model})`, `${model}7d`, utilization, resetsAt, false, active, severity);
+        return limit(`週(${model})`, `${model} 7d`, utilization, resetsAt, false, active, severity);
       }
       return limit('週(スコープ)', 'wk', utilization, resetsAt, false, active, severity);
     default: {
