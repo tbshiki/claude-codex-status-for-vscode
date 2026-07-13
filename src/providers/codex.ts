@@ -213,7 +213,7 @@ async function requestWhamUsage(auth: { accessToken: string; accountId?: string 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${auth.accessToken}`,
       Accept: 'application/json',
-      'User-Agent': 'claude-codex-status/0.1.10',
+      'User-Agent': 'claude-codex-status/0.1.11',
     };
     if (auth.accountId) {
       headers['ChatGPT-Account-Id'] = auth.accountId;

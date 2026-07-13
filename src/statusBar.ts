@@ -28,7 +28,6 @@ const BACKOFF_CAP_MS = 15 * 60_000;
  */
 export class StatusBarManager {
   private readonly item: vscode.StatusBarItem;
-  private readonly toggleItem: vscode.StatusBarItem;
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
@@ -40,11 +39,6 @@ export class StatusBarManager {
       100
     );
     this.item.command = 'claudeCodexStatus.refresh';
-    this.toggleItem = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Right,
-      101
-    );
-    this.toggleItem.command = 'claudeCodexStatus.toggleMonitoring';
     for (const p of providers) {
       this.states.set(p.id, { kind: 'loading' });
       this.monitoringEnabled.set(p.id, true);
@@ -53,7 +47,6 @@ export class StatusBarManager {
 
   start(): void {
     this.item.show();
-    this.toggleItem.show();
     this.restartPolling();
   }
 
@@ -63,7 +56,6 @@ export class StatusBarManager {
       this.pollTimer = undefined;
     }
     this.item.dispose();
-    this.toggleItem.dispose();
   }
 
   /** 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。 */
@@ -73,7 +65,6 @@ export class StatusBarManager {
       this.pollTimer = undefined;
     }
     if (!this.providers.some((p) => this.isMonitoringEnabled(p.id))) {
-      this.renderToggle();
       return;
     }
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
@@ -83,16 +74,6 @@ export class StatusBarManager {
     );
     void this.refreshAll();
     this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
-  }
-
-  /** Claude / Codex の自動監視を一括で停止・再開する。 */
-  toggleMonitoring(): void {
-    const enable = this.providers.some((p) => !this.isMonitoringEnabled(p.id));
-    for (const provider of this.providers) {
-      this.monitoringEnabled.set(provider.id, enable);
-    }
-    this.restartPolling();
-    this.render();
   }
 
   /** 指定プロバイダの自動監視だけを停止・再開する。 */
@@ -179,12 +160,9 @@ export class StatusBarManager {
     const enabled = this.enabledProviders();
     if (enabled.length === 0) {
       this.item.hide();
-      this.toggleItem.hide();
       return;
     }
     this.item.show();
-    this.toggleItem.show();
-    this.renderToggle();
 
     const verbose =
       vscode.workspace
@@ -219,66 +197,62 @@ export class StatusBarManager {
   }
 
   private renderTooltip(enabled: UsageProvider[]): vscode.MarkdownString {
-    const lines: string[] = [];
+    const tooltip = new vscode.MarkdownString();
+    tooltip.isTrusted = true;
+    const appendLine = (line: string): void => {
+      tooltip.appendText(line);
+      tooltip.appendMarkdown('  \n');
+    };
     for (const provider of enabled) {
       const state = this.states.get(provider.id) ?? { kind: 'loading' };
       const action = this.isMonitoringEnabled(provider.id) ? '停止' : '再開';
       const command = provider.id === 'claude'
         ? 'claudeCodexStatus.toggleClaudeMonitoring'
         : 'claudeCodexStatus.toggleCodexMonitoring';
-      lines.push(`■ ${provider.label}　[監視を${action}](command:${command})`);
+      tooltip.appendText(`■ ${provider.label}　`);
+      tooltip.appendMarkdown(`[監視を${action}](command:${command})`);
+      tooltip.appendMarkdown('  \n');
       switch (state.kind) {
         case 'loading':
-          lines.push('  取得中…');
+          appendLine('  取得中…');
           break;
         case 'unauthenticated':
-          lines.push(`  未ログイン: ${state.message}`);
+          appendLine(`  未ログイン: ${state.message}`);
           break;
         case 'notReady':
-          lines.push(`  準備中: ${state.message}`);
+          appendLine(`  準備中: ${state.message}`);
           break;
         case 'ok':
-          lines.push(...tooltipLimits(state.usage));
-          lines.push(`  最終取得: ${formatTime(state.fetchedAt)}`);
+          for (const line of tooltipLimits(state.usage)) appendLine(line);
+          appendLine(`  最終取得: ${formatTime(state.fetchedAt)}`);
           break;
         case 'rateLimited': {
           const secs = Math.max(0, Math.ceil((state.retryAt - Date.now()) / 1000));
-          lines.push(`  レート制限(429)中: 約${secs}秒後に再取得します`);
+          appendLine(`  レート制限(429)中: 約${secs}秒後に再取得します`);
           if (state.last) {
-            lines.push('  直近の正常値:');
-            lines.push(...tooltipLimits(state.last));
+            appendLine('  直近の正常値:');
+            for (const line of tooltipLimits(state.last)) appendLine(line);
             if (state.lastFetchedAt) {
-              lines.push(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
+              appendLine(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
             }
           }
           break;
         }
         case 'error':
-          lines.push(`  取得エラー: ${state.message}`);
+          appendLine(`  取得エラー: ${state.message}`);
           if (state.last) {
-            lines.push('  直近の正常値:');
-            lines.push(...tooltipLimits(state.last));
+            appendLine('  直近の正常値:');
+            for (const line of tooltipLimits(state.last)) appendLine(line);
             if (state.lastFetchedAt) {
-              lines.push(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
+              appendLine(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
             }
           }
           break;
       }
-      lines.push('');
+      appendLine('');
     }
-    lines.push('クリックで今すぐ更新');
-
-    const tooltip = new vscode.MarkdownString(lines.join('\n'));
-    tooltip.isTrusted = true;
+    appendLine('クリックで今すぐ更新');
     return tooltip;
-  }
-
-  private renderToggle(): void {
-    const allEnabled = this.providers.every((p) => this.isMonitoringEnabled(p.id));
-    this.toggleItem.text = allEnabled ? '$(debug-pause)' : '$(play)';
-    this.toggleItem.tooltip = allEnabled
-      ? 'Claude / Codex の自動監視を停止'
-      : 'Claude / Codex の自動監視を再開（ホバー詳細から個別変更できます）';
   }
 
   private isMonitoringEnabled(id: ProviderId): boolean {
