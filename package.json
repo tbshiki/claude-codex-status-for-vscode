@@ -4,6 +4,10 @@
   "description": "Claude Code と OpenAI Codex CLI のレート残量(5時間枠/週枠)をVSCodeのステータスバーに常時表示します",
   "version": "0.1.0",
   "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tbshiki/claude-codex-status-for-vscode.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -64,9 +68,10 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
-    "package": "vsce package --allow-missing-repository --no-yarn"
+    "package": "vsce package --no-yarn"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
