@@ -47,9 +47,12 @@ export class CodexProvider implements UsageProvider {
   readonly label = 'Codex';
   readonly icon = '$(zap)';
 
+  /** @param extensionVersion User-Agent に載せる拡張機能の実バージョン。 */
+  constructor(private readonly extensionVersion: string) {}
+
   async fetchUsage(): Promise<ProviderUsage> {
     const auth = await readCodexAuth(resolveCodexAuthPath());
-    const response = await requestWhamUsage(auth);
+    const response = await requestWhamUsage(auth, this.extensionVersion);
     return normalizeCodexUsage(response);
   }
 }
@@ -206,14 +209,17 @@ async function readCodexAuth(authPath: string): Promise<{ accessToken: string; a
   return { accessToken, accountId };
 }
 
-async function requestWhamUsage(auth: { accessToken: string; accountId?: string }): Promise<unknown> {
+async function requestWhamUsage(
+  auth: { accessToken: string; accountId?: string },
+  extensionVersion: string
+): Promise<unknown> {
   const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CODEX_REQUEST_TIMEOUT_MS);
   try {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${auth.accessToken}`,
       Accept: 'application/json',
-      'User-Agent': 'claude-codex-status/0.1.11',
+      'User-Agent': `claude-codex-status/${extensionVersion}`,
     };
     if (auth.accountId) {
       headers['ChatGPT-Account-Id'] = auth.accountId;
