@@ -247,7 +247,7 @@ function tooltipLimits(usage: ProviderUsage): string[] {
   const out: string[] = [];
   for (const l of usage.limits) {
     // 利用率とリセット情報を改行で分ける。
-    out.push(`  ${l.label}: ${formatPercent(l)}`);
+    out.push(`  ${l.label}: ${formatPercentLabel(l)}`);
     out.push(`    ${formatResetLine(l)}`);
   }
   return out;
@@ -255,7 +255,13 @@ function tooltipLimits(usage: ProviderUsage): string[] {
 
 /** リセット時刻が未設定(枠未開始)なら「-%」、それ以外は利用率を返す。 */
 function formatPercent(l: UsageLimit): string {
-  return l.resetsAt === null ? '-%' : `${l.utilization}%`;
+  return l.percentageKind === 'remaining' || l.resetsAt !== null
+    ? `${l.utilization}%`
+    : '-%';
+}
+
+function formatPercentLabel(l: UsageLimit): string {
+  return `${l.percentageKind === 'remaining' ? '残量' : '利用率'} ${formatPercent(l)}`;
 }
 
 /** 「リセット 2時間36分後  リセット時間 19時02分」形式。未設定なら「リセット -」。 */
