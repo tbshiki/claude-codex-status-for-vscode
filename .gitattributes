@@ -1,0 +1,17 @@
+* text=auto eol=lf
+
+# Windows PowerShell 5.1 compatibility
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Common binary formats
+*.gif binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.png binary
+*.webp binary
+*.zip binary
+*.vsix binary

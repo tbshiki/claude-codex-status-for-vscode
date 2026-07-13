@@ -1,0 +1,98 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "AI: Sync skill symlinks",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\sync-ai-symlinks.ps1"
+      ],
+      "windows": {
+        "command": "powershell.exe"
+      },
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "close": true
+      }
+    },
+    {
+      "label": "Dropbox: Copy workspace (overwrite)",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\copy-workspace-to-dropbox.ps1",
+        "-DestinationRoot",
+        "${input:dropboxDestinationRoot}",
+        "-DestinationName",
+        "${input:dropboxDestinationName}"
+      ],
+      "windows": {
+        "command": "powershell.exe"
+      },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Dropbox: Copy workspace (clean)",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\copy-workspace-to-dropbox.ps1",
+        "-DestinationRoot",
+        "${input:dropboxDestinationRoot}",
+        "-DestinationName",
+        "${input:dropboxDestinationName}",
+        "-Clean"
+      ],
+      "windows": {
+        "command": "powershell.exe"
+      },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "dropboxDestinationRoot",
+      "type": "promptString",
+      "description": "Dropbox コピー先のルート絶対パス（例: D:\\Dropbox\\Git）"
+    },
+    {
+      "id": "dropboxDestinationName",
+      "type": "promptString",
+      "description": "コピー先ディレクトリ名（空欄なら現在のワークスペース名）",
+      "default": ""
+    }
+  ]
+}
