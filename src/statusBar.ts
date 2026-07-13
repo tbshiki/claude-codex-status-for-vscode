@@ -226,7 +226,16 @@ export class StatusBarManager {
 
   private renderTooltip(enabled: UsageProvider[]): vscode.MarkdownString {
     const tooltip = new vscode.MarkdownString();
-    tooltip.isTrusted = true;
+    // 全コマンドを許可(true)せず、自前のコマンドだけに絞る(コマンドリンク注入対策)。
+    tooltip.isTrusted = {
+      enabledCommands: [
+        'claudeCodexStatus.refresh',
+        'claudeCodexStatus.refreshClaude',
+        'claudeCodexStatus.refreshCodex',
+        'claudeCodexStatus.toggleClaudeMonitoring',
+        'claudeCodexStatus.toggleCodexMonitoring',
+      ],
+    };
     tooltip.supportThemeIcons = true;
 
     enabled.forEach((provider, index) => {
@@ -329,9 +338,18 @@ function limitsTable(usage: ProviderUsage): string {
     return '(枠情報なし)';
   }
   const rows = usage.limits.map(
-    (l) => `| ${l.label} | ${usageCell(l)} | ${resetCell(l)} |`
+    (l) => `| ${escapeMarkdown(l.label)} | ${usageCell(l)} | ${resetCell(l)} |`
   );
   return ['| 枠 | 使用状況 | リセット |', '| :-- | :-- | :-- |', ...rows].join('\n');
+}
+
+/**
+ * API 由来の文字列(モデル名など)を Markdown へ埋め込む前のエスケープ。
+ * テーブルのセル崩れ(`|`)、リンク・強調などの記法、`$(...)` テーマアイコンの
+ * 注入を防ぐ。`(` `)` を潰すことで `$(icon)` も無効化される。
+ */
+function escapeMarkdown(text: string): string {
+  return text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
 }
 
 /** 「▰▰▰▰▱▱▱▱▱▱ 残量 62%」形式のメーター付きセル。未開始の枠は「-」。 */
