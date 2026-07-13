@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "PowerShell(git status:*)",
+      "PowerShell(git diff:*)",
+      "PowerShell(git log:*)",
+      "PowerShell(git show:*)",
+      "PowerShell(git branch:*)",
+      "PowerShell(git remote:*)",
+      "PowerShell(rg:*)",
+      "PowerShell(Get-ChildItem:*)",
+      "PowerShell(Get-Item:*)",
+      "PowerShell(Test-Path:*)",
+      "PowerShell(Resolve-Path:*)",
+      "PowerShell(Set-Location:*)",
+      "PowerShell(Get-Content:*)",
+      "PowerShell(Select-String:*)",
+      "PowerShell(npm run compile:*)",
+      "PowerShell(npm run lint:*)",
+      "PowerShell(npm run test:*)",
+      "PowerShell(npm test:*)",
+      "PowerShell(npx tsc:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(rg:*)",
+      "Bash(npm run compile:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm test:*)",
+      "Bash(npx tsc:*)",
+      "Read"
+    ],
+    "ask": [
+      "PowerShell(git commit:*)",
+      "PowerShell(git tag:*)",
+      "PowerShell(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(git tag:*)",
+      "Bash(git push:*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.key)",
+      "Read(**/*.pem)",
+      "Read(**/secrets.*)",
+      "Read(**/.credentials.json)",
+      "Read(**/.codex/auth.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": [
+              "-NoLogo",
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/deny-secret-file-access.ps1"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": [
+              "-NoLogo",
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/auto-allow-git-tracked-edit.ps1"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

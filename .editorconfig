@@ -1,0 +1,18 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+# Windows PowerShell 5.1 は BOM なし UTF-8 を ANSI として扱うため、
+# 日本語を含むスクリプトは UTF-8 BOM と CRLF にする。
+[*.ps1]
+charset = utf-8-bom
+end_of_line = crlf

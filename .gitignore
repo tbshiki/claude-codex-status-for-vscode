@@ -1,0 +1,33 @@
+# OS / editor local files
+.DS_Store
+Thumbs.db
+*.local
+
+# Personal AI settings (never share with the repository)
+/CLAUDE.local.md
+/.claude/settings.local.json
+
+# Dependencies and common generated output
+node_modules/
+out/
+dist/
+build/
+coverage/
+.vscode-test/
+log/
+*.log
+
+# VSCode extension package artifacts
+*.vsix
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.*
+
+# Generated AI skill links (recreate with scripts/sync-ai-symlinks.ps1)
+/.agents/skills
+/.claude/skills
