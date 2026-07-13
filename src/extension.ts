@@ -6,8 +6,11 @@ import { CodexProvider } from './providers/codex';
 let manager: StatusBarManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
+  // User-Agent を実バージョンへ追随させる(package.json を正とする)。
+  const extensionVersion: string =
+    context.extension.packageJSON?.version ?? '0.0.0';
   const claude = new ClaudeProvider();
-  manager = new StatusBarManager([claude, new CodexProvider()]);
+  manager = new StatusBarManager([claude, new CodexProvider(extensionVersion)]);
   const status = manager;
 
   const diagnostics = vscode.window.createOutputChannel('Claude & Codex Status');

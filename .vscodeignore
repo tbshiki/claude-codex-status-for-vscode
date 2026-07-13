@@ -16,8 +16,12 @@ CLAUDE.local.md
 # Repo meta and docs
 .vscode/**
 .git/**
+.github/**
 .gitignore
 .gitattributes
 .editorconfig
 docs/**
 *.code-workspace
+
+# Local build output (VSIX itself must not contain past packages)
+dist/**
