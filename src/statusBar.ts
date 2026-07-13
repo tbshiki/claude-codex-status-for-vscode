@@ -5,6 +5,7 @@ import {
   ProviderNotReadyError,
   ProviderUsage,
   RateLimitError,
+  UsageLimit,
   UsageProvider,
 } from './providers/types';
 
@@ -233,13 +234,12 @@ export class StatusBarManager {
 }
 
 function formatUsage(usage: ProviderUsage, verbose: boolean): string {
-  // 主要枠(セッション/週全体)は常に表示。モデル別などの枠は active のときだけ添える。
-  const shown = usage.limits.filter((l) => l.primary || l.active);
-  const parts = shown.map((l) => {
-    const base = `${l.shortLabel}:${l.utilization}%`;
-    return verbose && l.resetsAt ? `${base}(${formatResetIn(l.resetsAt)})` : base;
+  // モデル別(Fable 等)も含め全枠を表示。": " の前後に半角スペースを入れる。
+  const parts = usage.limits.map((l) => {
+    const base = `${l.shortLabel} : ${formatPercent(l)}`;
+    return verbose && l.resetsAt ? `${base} (${formatResetIn(l.resetsAt)})` : base;
   });
-  return parts.join(' ');
+  return parts.join('  ');
 }
 
 function tooltipLimits(usage: ProviderUsage): string[] {
@@ -247,8 +247,13 @@ function tooltipLimits(usage: ProviderUsage): string[] {
     return ['- (枠情報なし)'];
   }
   return usage.limits.map(
-    (l) => `- ${l.label}: ${l.utilization}% (リセット ${formatResetIn(l.resetsAt)})`
+    (l) => `- ${l.label} : ${formatPercent(l)} (リセット ${formatResetIn(l.resetsAt)})`
   );
+}
+
+/** リセット時刻が未設定(枠未開始)なら「-%」、それ以外は利用率を返す。 */
+function formatPercent(l: UsageLimit): string {
+  return l.resetsAt === null ? '-%' : `${l.utilization}%`;
 }
 
 function formatResetIn(resetsAt: string | null): string {
