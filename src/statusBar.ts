@@ -164,14 +164,14 @@ export class StatusBarManager {
           lines.push(`- 準備中: ${state.message}`);
           break;
         case 'ok':
-          lines.push(...tooltipWindows(state.usage));
+          lines.push(...tooltipLimits(state.usage));
           lines.push(`- 最終取得: ${formatTime(state.fetchedAt)}`);
           break;
         case 'error':
           lines.push(`- 取得エラー: ${state.message}`);
           if (state.last) {
             lines.push('- 直近の正常値:');
-            lines.push(...tooltipWindows(state.last).map((l) => `  ${l}`));
+            lines.push(...tooltipLimits(state.last).map((l) => `  ${l}`));
             if (state.lastFetchedAt) {
               lines.push(`- 最終正常取得: ${formatTime(state.lastFetchedAt)}`);
             }
@@ -189,18 +189,22 @@ export class StatusBarManager {
 }
 
 function formatUsage(usage: ProviderUsage, verbose: boolean): string {
-  const base = `5h:${usage.fiveHour.utilization}% 7d:${usage.sevenDay.utilization}%`;
-  if (!verbose) {
-    return base;
-  }
-  return `${base} (5h ${formatResetIn(usage.fiveHour.resetsAt)})`;
+  // 主要枠(セッション/週全体)は常に表示。モデル別などの枠は active のときだけ添える。
+  const shown = usage.limits.filter((l) => l.primary || l.active);
+  const parts = shown.map((l) => {
+    const base = `${l.shortLabel}:${l.utilization}%`;
+    return verbose && l.resetsAt ? `${base}(${formatResetIn(l.resetsAt)})` : base;
+  });
+  return parts.join(' ');
 }
 
-function tooltipWindows(usage: ProviderUsage): string[] {
-  return [
-    `- 5時間枠: ${usage.fiveHour.utilization}% (リセット ${formatResetIn(usage.fiveHour.resetsAt)})`,
-    `- 週枠: ${usage.sevenDay.utilization}% (リセット ${formatResetIn(usage.sevenDay.resetsAt)})`,
-  ];
+function tooltipLimits(usage: ProviderUsage): string[] {
+  if (usage.limits.length === 0) {
+    return ['- (枠情報なし)'];
+  }
+  return usage.limits.map(
+    (l) => `- ${l.label}: ${l.utilization}% (リセット ${formatResetIn(l.resetsAt)})`
+  );
 }
 
 function formatResetIn(resetsAt: string | null): string {
