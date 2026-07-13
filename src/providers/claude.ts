@@ -6,6 +6,7 @@ import * as os from 'os';
 import {
   NotAuthenticatedError,
   ProviderUsage,
+  RateLimitError,
   UsageLimit,
   UsageProvider,
 } from './types';
@@ -108,6 +109,13 @@ export class ClaudeProvider implements UsageProvider {
               } catch {
                 reject(new Error('レスポンスのJSON解析に失敗しました'));
               }
+            } else if (status === 429) {
+              reject(
+                new RateLimitError(
+                  'レート制限(HTTP 429)',
+                  parseRetryAfter(res.headers['retry-after'])
+                )
+              );
             } else {
               reject(new Error(`HTTP ${status}`));
             }
@@ -183,4 +191,27 @@ function limit(
   severity: string
 ): UsageLimit {
   return { label, shortLabel, utilization, resetsAt, primary, active, severity };
+}
+
+/**
+ * Retry-After ヘッダ(秒数 or HTTP-date)をミリ秒へ変換する。
+ * 解釈できなければ undefined を返し、呼び出し側の既定バックオフに委ねる。
+ */
+function parseRetryAfter(
+  value: string | string[] | undefined
+): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed) * 1000;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+  return undefined;
 }

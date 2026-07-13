@@ -4,6 +4,7 @@ import {
   ProviderId,
   ProviderNotReadyError,
   ProviderUsage,
+  RateLimitError,
   UsageProvider,
 } from './providers/types';
 
@@ -12,9 +13,13 @@ type ProviderStatus =
   | { kind: 'ok'; usage: ProviderUsage; fetchedAt: number }
   | { kind: 'unauthenticated'; message: string }
   | { kind: 'notReady'; message: string }
+  | { kind: 'rateLimited'; retryAt: number; last?: ProviderUsage; lastFetchedAt?: number }
   | { kind: 'error'; message: string; last?: ProviderUsage; lastFetchedAt?: number };
 
-const MIN_INTERVAL_SEC = 30;
+const MIN_INTERVAL_SEC = 60;
+/** 429 バックオフの基準(初回)と上限。Retry-After があればそちらを優先。 */
+const BACKOFF_BASE_MS = 60_000;
+const BACKOFF_CAP_MS = 15 * 60_000;
 
 /**
  * 複数プロバイダの残量を1つのステータスバー項目に統合表示する。
@@ -23,6 +28,7 @@ const MIN_INTERVAL_SEC = 30;
 export class StatusBarManager {
   private readonly item: vscode.StatusBarItem;
   private readonly states = new Map<ProviderId, ProviderStatus>();
+  private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
   private pollTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly providers: UsageProvider[]) {
@@ -75,15 +81,41 @@ export class StatusBarManager {
   }
 
   private async refreshOne(provider: UsageProvider): Promise<void> {
+    const prev = this.states.get(provider.id);
+    const { usage: last, at: lastFetchedAt } = lastGood(prev);
+
+    // バックオフ中は API を叩かず、待機状態のまま据え置く(Claude 側の負荷を避ける)。
+    const b = this.backoff.get(provider.id);
+    if (b && Date.now() < b.until) {
+      this.states.set(provider.id, {
+        kind: 'rateLimited',
+        retryAt: b.until,
+        last,
+        lastFetchedAt,
+      });
+      return;
+    }
+
     try {
       const usage = await provider.fetchUsage();
-      this.states.set(provider.id, {
-        kind: 'ok',
-        usage,
-        fetchedAt: Date.now(),
-      });
+      this.backoff.delete(provider.id);
+      this.states.set(provider.id, { kind: 'ok', usage, fetchedAt: Date.now() });
     } catch (err) {
-      if (err instanceof NotAuthenticatedError) {
+      if (err instanceof RateLimitError) {
+        const failures = (b?.failures ?? 0) + 1;
+        const delay =
+          err.retryAfterMs ??
+          Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
+        const until = Date.now() + delay;
+        this.backoff.set(provider.id, { until, failures });
+        this.states.set(provider.id, {
+          kind: 'rateLimited',
+          retryAt: until,
+          last,
+          lastFetchedAt,
+        });
+      } else if (err instanceof NotAuthenticatedError) {
+        this.backoff.delete(provider.id);
         this.states.set(provider.id, {
           kind: 'unauthenticated',
           message: err.message,
@@ -91,10 +123,6 @@ export class StatusBarManager {
       } else if (err instanceof ProviderNotReadyError) {
         this.states.set(provider.id, { kind: 'notReady', message: err.message });
       } else {
-        const prev = this.states.get(provider.id);
-        const last = prev && prev.kind === 'ok' ? prev.usage : undefined;
-        const lastFetchedAt =
-          prev && prev.kind === 'ok' ? prev.fetchedAt : undefined;
         this.states.set(provider.id, {
           kind: 'error',
           message: errorMessage(err),
@@ -141,6 +169,10 @@ export class StatusBarManager {
         return `${head}: 準備中`;
       case 'ok':
         return `${head} ${formatUsage(state.usage, verbose)}`;
+      case 'rateLimited':
+        return state.last
+          ? `${head} ${formatUsage(state.last, verbose)} $(clock)`
+          : `${head}: 待機中 $(clock)`;
       case 'error':
         return state.last
           ? `${head} ${formatUsage(state.last, verbose)} $(alert)`
@@ -167,6 +199,18 @@ export class StatusBarManager {
           lines.push(...tooltipLimits(state.usage));
           lines.push(`- 最終取得: ${formatTime(state.fetchedAt)}`);
           break;
+        case 'rateLimited': {
+          const secs = Math.max(0, Math.ceil((state.retryAt - Date.now()) / 1000));
+          lines.push(`- レート制限(429)中: 約${secs}秒後に再取得します`);
+          if (state.last) {
+            lines.push('- 直近の正常値:');
+            lines.push(...tooltipLimits(state.last).map((l) => `  ${l}`));
+            if (state.lastFetchedAt) {
+              lines.push(`- 最終正常取得: ${formatTime(state.lastFetchedAt)}`);
+            }
+          }
+          break;
+        }
         case 'error':
           lines.push(`- 取得エラー: ${state.message}`);
           if (state.last) {
@@ -239,4 +283,18 @@ function errorMessage(err: unknown): string {
     return err.message;
   }
   return String(err);
+}
+
+/** 直近の正常値を、失敗やレート制限を挟んでも失わないよう取り出す。 */
+function lastGood(prev?: ProviderStatus): { usage?: ProviderUsage; at?: number } {
+  if (!prev) {
+    return {};
+  }
+  if (prev.kind === 'ok') {
+    return { usage: prev.usage, at: prev.fetchedAt };
+  }
+  if (prev.kind === 'error' || prev.kind === 'rateLimited') {
+    return { usage: prev.last, at: prev.lastFetchedAt };
+  }
+  return {};
 }
