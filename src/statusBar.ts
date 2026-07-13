@@ -227,61 +227,86 @@ export class StatusBarManager {
   private renderTooltip(enabled: UsageProvider[]): vscode.MarkdownString {
     const tooltip = new vscode.MarkdownString();
     tooltip.isTrusted = true;
-    const appendLine = (line: string): void => {
-      tooltip.appendText(line);
-      tooltip.appendMarkdown('  \n');
-    };
-    for (const provider of enabled) {
-      const state = this.states.get(provider.id) ?? { kind: 'loading' };
-      const action = this.isMonitoringEnabled(provider.id) ? '停止' : '再開';
-      const command = provider.id === 'claude'
-        ? 'claudeCodexStatus.toggleClaudeMonitoring'
-        : 'claudeCodexStatus.toggleCodexMonitoring';
-      tooltip.appendText(`■ ${provider.label}　`);
-      tooltip.appendMarkdown(`[監視を${action}](command:${command})`);
-      tooltip.appendMarkdown('  \n');
-      switch (state.kind) {
-        case 'loading':
-          appendLine('  取得中…');
-          break;
-        case 'unauthenticated':
-          appendLine(`  未ログイン: ${state.message}`);
-          break;
-        case 'notReady':
-          appendLine(`  準備中: ${state.message}`);
-          break;
-        case 'ok':
-          for (const line of tooltipLimits(state.usage)) appendLine(line);
-          appendLine(`  最終取得: ${formatTime(state.fetchedAt)}`);
-          break;
-        case 'rateLimited': {
-          const secs = Math.max(0, Math.ceil((state.retryAt - Date.now()) / 1000));
-          appendLine(`  レート制限(429)中: 約${secs}秒後に自動再取得します`);
-          appendLine('  (クリックで今すぐ再試行できます)');
-          if (state.last) {
-            appendLine('  直近の正常値:');
-            for (const line of tooltipLimits(state.last)) appendLine(line);
-            if (state.lastFetchedAt) {
-              appendLine(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
-            }
-          }
-          break;
-        }
-        case 'error':
-          appendLine(`  取得エラー: ${state.message}`);
-          if (state.last) {
-            appendLine('  直近の正常値:');
-            for (const line of tooltipLimits(state.last)) appendLine(line);
-            if (state.lastFetchedAt) {
-              appendLine(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
-            }
-          }
-          break;
+    tooltip.supportThemeIcons = true;
+
+    enabled.forEach((provider, index) => {
+      if (index > 0) {
+        tooltip.appendMarkdown('\n\n---\n\n');
       }
-      appendLine('');
-    }
-    appendLine('クリックで今すぐ更新');
+      this.appendProviderSection(tooltip, provider);
+    });
+
+    tooltip.appendMarkdown('\n\n$(refresh) クリックで今すぐ更新');
     return tooltip;
+  }
+
+  private appendProviderSection(
+    tooltip: vscode.MarkdownString,
+    provider: UsageProvider
+  ): void {
+    const state = this.states.get(provider.id) ?? { kind: 'loading' as const };
+    const monitoring = this.isMonitoringEnabled(provider.id);
+    const refreshCommand = provider.id === 'claude'
+      ? 'claudeCodexStatus.refreshClaude'
+      : 'claudeCodexStatus.refreshCodex';
+    const toggleCommand = provider.id === 'claude'
+      ? 'claudeCodexStatus.toggleClaudeMonitoring'
+      : 'claudeCodexStatus.toggleCodexMonitoring';
+
+    tooltip.appendMarkdown(`**${provider.icon} ${provider.label}**`);
+    if (!monitoring) {
+      tooltip.appendMarkdown(' *(監視停止中)*');
+    }
+    tooltip.appendMarkdown(
+      `　[更新](command:${refreshCommand} "今すぐ再取得")` +
+        `　[監視を${monitoring ? '停止' : '再開'}](command:${toggleCommand})`
+    );
+
+    switch (state.kind) {
+      case 'loading':
+        tooltip.appendMarkdown('\n\n$(sync~spin) 取得中…');
+        break;
+      case 'unauthenticated':
+        tooltip.appendMarkdown('\n\n$(account) 未ログイン: ');
+        tooltip.appendText(state.message);
+        break;
+      case 'notReady':
+        tooltip.appendMarkdown('\n\n$(tools) 準備中: ');
+        tooltip.appendText(state.message);
+        break;
+      case 'ok':
+        tooltip.appendMarkdown(`\n\n${limitsTable(state.usage)}`);
+        tooltip.appendMarkdown(`\n$(history) 最終取得 ${formatTime(state.fetchedAt)}`);
+        break;
+      case 'rateLimited': {
+        const secs = Math.max(0, Math.ceil((state.retryAt - Date.now()) / 1000));
+        tooltip.appendMarkdown(
+          `\n\n$(clock) レート制限(429)中 — 約${secs}秒後に自動再取得` +
+            '(「更新」で今すぐ再試行)'
+        );
+        if (state.last) {
+          tooltip.appendMarkdown(`\n\n${limitsTable(state.last)}`);
+          if (state.lastFetchedAt) {
+            tooltip.appendMarkdown(
+              `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
+            );
+          }
+        }
+        break;
+      }
+      case 'error':
+        tooltip.appendMarkdown('\n\n$(alert) 取得エラー: ');
+        tooltip.appendText(state.message);
+        if (state.last) {
+          tooltip.appendMarkdown(`\n\n${limitsTable(state.last)}`);
+          if (state.lastFetchedAt) {
+            tooltip.appendMarkdown(
+              `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
+            );
+          }
+        }
+        break;
+    }
   }
 
   private isMonitoringEnabled(id: ProviderId): boolean {
@@ -298,17 +323,47 @@ function formatUsage(usage: ProviderUsage, verbose: boolean): string {
   return parts.join('  ');
 }
 
-function tooltipLimits(usage: ProviderUsage): string[] {
+/** ツールチップ用の枠一覧を Markdown テーブルで返す。 */
+function limitsTable(usage: ProviderUsage): string {
   if (usage.limits.length === 0) {
-    return ['  (枠情報なし)'];
+    return '(枠情報なし)';
   }
-  const out: string[] = [];
-  for (const l of usage.limits) {
-    // 利用率とリセット情報を改行で分ける。
-    out.push(`  ${l.label}: ${formatPercentLabel(l)}`);
-    out.push(`    ${formatResetLine(l)}`);
+  const rows = usage.limits.map(
+    (l) => `| ${l.label} | ${usageCell(l)} | ${resetCell(l)} |`
+  );
+  return ['| 枠 | 使用状況 | リセット |', '| :-- | :-- | :-- |', ...rows].join('\n');
+}
+
+/** 「▰▰▰▰▱▱▱▱▱▱ 残量 62%」形式のメーター付きセル。未開始の枠は「-」。 */
+function usageCell(l: UsageLimit): string {
+  const pct = formatPercent(l);
+  if (pct === '-%') {
+    return '-';
   }
-  return out;
+  const kind = l.percentageKind === 'remaining' ? '残量' : '使用';
+  return `${meter(l.utilization)} ${kind} ${pct}${severityIcon(l.severity)}`;
+}
+
+function meter(percent: number): string {
+  const filled = Math.max(0, Math.min(10, Math.round(percent / 10)));
+  return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
+}
+
+function severityIcon(severity: string): string {
+  if (severity === 'critical' || severity === 'error') {
+    return ' $(error)';
+  }
+  if (severity === 'warning') {
+    return ' $(warning)';
+  }
+  return '';
+}
+
+function resetCell(l: UsageLimit): string {
+  if (l.resetsAt === null) {
+    return '-';
+  }
+  return `${formatResetIn(l.resetsAt)} (${formatResetClock(l.resetsAt)})`;
 }
 
 /** リセット時刻が未設定(枠未開始)なら「-%」、それ以外は利用率を返す。 */
@@ -316,18 +371,6 @@ function formatPercent(l: UsageLimit): string {
   return l.percentageKind === 'remaining' || l.resetsAt !== null
     ? `${l.utilization}%`
     : '-%';
-}
-
-function formatPercentLabel(l: UsageLimit): string {
-  return `${l.percentageKind === 'remaining' ? '残量' : '利用率'} ${formatPercent(l)}`;
-}
-
-/** 「リセット 2時間36分後  リセット時間 19時02分」形式。未設定なら「リセット -」。 */
-function formatResetLine(l: UsageLimit): string {
-  if (l.resetsAt === null) {
-    return 'リセット -';
-  }
-  return `リセット ${formatResetIn(l.resetsAt)}  リセット時間 ${formatResetClock(l.resetsAt)}`;
 }
 
 /**
