@@ -181,44 +181,44 @@ export class StatusBarManager {
     }
   }
 
-  private renderTooltip(enabled: UsageProvider[]): vscode.MarkdownString {
+  private renderTooltip(enabled: UsageProvider[]): string {
     const lines: string[] = [];
     for (const provider of enabled) {
       const state = this.states.get(provider.id) ?? { kind: 'loading' };
-      lines.push(`**${provider.label}**`);
+      lines.push(`■ ${provider.label}`);
       switch (state.kind) {
         case 'loading':
-          lines.push('- 取得中…');
+          lines.push('  取得中…');
           break;
         case 'unauthenticated':
-          lines.push(`- 未ログイン: ${state.message}`);
+          lines.push(`  未ログイン: ${state.message}`);
           break;
         case 'notReady':
-          lines.push(`- 準備中: ${state.message}`);
+          lines.push(`  準備中: ${state.message}`);
           break;
         case 'ok':
           lines.push(...tooltipLimits(state.usage));
-          lines.push(`- 最終取得: ${formatTime(state.fetchedAt)}`);
+          lines.push(`  最終取得: ${formatTime(state.fetchedAt)}`);
           break;
         case 'rateLimited': {
           const secs = Math.max(0, Math.ceil((state.retryAt - Date.now()) / 1000));
-          lines.push(`- レート制限(429)中: 約${secs}秒後に再取得します`);
+          lines.push(`  レート制限(429)中: 約${secs}秒後に再取得します`);
           if (state.last) {
-            lines.push('- 直近の正常値:');
-            lines.push(...tooltipLimits(state.last).map((l) => `  ${l}`));
+            lines.push('  直近の正常値:');
+            lines.push(...tooltipLimits(state.last));
             if (state.lastFetchedAt) {
-              lines.push(`- 最終正常取得: ${formatTime(state.lastFetchedAt)}`);
+              lines.push(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
             }
           }
           break;
         }
         case 'error':
-          lines.push(`- 取得エラー: ${state.message}`);
+          lines.push(`  取得エラー: ${state.message}`);
           if (state.last) {
-            lines.push('- 直近の正常値:');
-            lines.push(...tooltipLimits(state.last).map((l) => `  ${l}`));
+            lines.push('  直近の正常値:');
+            lines.push(...tooltipLimits(state.last));
             if (state.lastFetchedAt) {
-              lines.push(`- 最終正常取得: ${formatTime(state.lastFetchedAt)}`);
+              lines.push(`  最終正常取得: ${formatTime(state.lastFetchedAt)}`);
             }
           }
           break;
@@ -227,9 +227,7 @@ export class StatusBarManager {
     }
     lines.push('クリックで今すぐ更新');
 
-    const md = new vscode.MarkdownString(lines.join('\n'));
-    md.supportThemeIcons = true;
-    return md;
+    return lines.join('\n');
   }
 }
 
@@ -244,16 +242,46 @@ function formatUsage(usage: ProviderUsage, verbose: boolean): string {
 
 function tooltipLimits(usage: ProviderUsage): string[] {
   if (usage.limits.length === 0) {
-    return ['- (枠情報なし)'];
+    return ['  (枠情報なし)'];
   }
-  return usage.limits.map(
-    (l) => `- ${l.label} : ${formatPercent(l)} (リセット ${formatResetIn(l.resetsAt)})`
-  );
+  const out: string[] = [];
+  for (const l of usage.limits) {
+    // 利用率とリセット情報を改行で分ける。
+    out.push(`  ${l.label}: ${formatPercent(l)}`);
+    out.push(`    ${formatResetLine(l)}`);
+  }
+  return out;
 }
 
 /** リセット時刻が未設定(枠未開始)なら「-%」、それ以外は利用率を返す。 */
 function formatPercent(l: UsageLimit): string {
   return l.resetsAt === null ? '-%' : `${l.utilization}%`;
+}
+
+/** 「リセット 2時間36分後  リセット時間 19時02分」形式。未設定なら「リセット -」。 */
+function formatResetLine(l: UsageLimit): string {
+  if (l.resetsAt === null) {
+    return 'リセット -';
+  }
+  return `リセット ${formatResetIn(l.resetsAt)}  リセット時間 ${formatResetClock(l.resetsAt)}`;
+}
+
+/**
+ * リセット時刻を利用者のローカル時間軸で表す。
+ * 当日なら「19時02分」、別日なら「M/D 19時02分」。
+ */
+function formatResetClock(resetsAt: string): string {
+  const d = new Date(resetsAt);
+  if (Number.isNaN(d.getTime())) {
+    return '-';
+  }
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const time = `${d.getHours()}時${d.getMinutes().toString().padStart(2, '0')}分`;
+  return sameDay ? time : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }
 
 function formatResetIn(resetsAt: string | null): string {
