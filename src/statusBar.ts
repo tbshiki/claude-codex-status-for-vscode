@@ -76,7 +76,7 @@ export class StatusBarManager {
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
     const intervalSec = Math.max(
       MIN_INTERVAL_SEC,
-      cfg.get<number>('pollIntervalSeconds', 60)
+      cfg.get<number>('pollIntervalSeconds', 300)
     );
     void this.refreshAll();
     this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
