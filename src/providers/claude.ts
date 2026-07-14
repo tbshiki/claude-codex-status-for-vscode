@@ -168,14 +168,20 @@ function mapLimit(l: RawLimit): UsageLimit {
 
 /**
  * API 由来の表示用文字列から制御文字・改行を除き、表示崩れしない長さへ丸める。
+ * この文字列は shortLabel 経由でステータスバー本文(StatusBarItem.text)にも
+ * 入り、そこでも `$(icon)` が解釈されるため、`$(` はここで分断する。
  * Markdown 記法のエスケープは表示側(statusBar)で行う。
  */
 function sanitizeApiText(value: string | null | undefined): string | undefined {
   if (typeof value !== 'string') {
     return undefined;
   }
-  const cleaned = value.replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim().slice(0, 64).trim();
-  return cleaned.length > 0 ? cleaned : undefined;
+  const cleaned = value
+    .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
+    .replace(/\$\(/g, '$ (');
+  // サロゲートペアを分断しないようコードポイント単位で丸める。
+  const truncated = [...cleaned.trim()].slice(0, 64).join('').trim();
+  return truncated.length > 0 ? truncated : undefined;
 }
 
 function legacyLimits(raw: RawUsageResponse): UsageLimit[] {
