@@ -39,7 +39,7 @@ src/
 docs/requirements.md    # 要件定義書
 ```
 
-Claude と Codex の両方を表示できます（マイルストーン M2）。Codex は `~/.codex/auth.json` の認証情報を使い、使用状況 API から直接取得します。パーセントは Claude / Codex 共通の基準で表示され、既定は残量（あと何%使えるか）です。設定 `claudeCodexStatus.displayMode` またはホバー詳細内の切替リンクで、残量表示と使用率表示をいつでも切り替えられます。Codex の5時間枠がない場合は `全体` と表示します。ホバー詳細内のリンクから Claude / Codex を個別に停止・再開できます。API 変更や認証期限切れなどで取得できない場合は、直近値を保持します。
+Claude と Codex の両方を表示できます（マイルストーン M2）。Codex は `~/.codex/auth.json` の認証情報を使い、使用状況 API から直接取得します。パーセントは Claude / Codex 共通の基準で表示され、既定は残量（あと何%使えるか）です。設定 `claudeCodexStatus.displayMode` またはホバー詳細内の切替リンクで、残量表示と使用率表示をいつでも切り替えられます。いずれかの枠の残量が既定で30%を下回るとステータスバーが警告色(黄系)、10%を下回るとエラー色(赤系)になり、ホバー内の該当枠に警告アイコンが付きます(しきい値は `claudeCodexStatus.warningRemainingPercent` / `criticalRemainingPercent` で変更可、色はテーマ準拠)。Codex の5時間枠がない場合は `全体` と表示します。ホバー詳細内のリンクから Claude / Codex を個別に停止・再開できます。API 変更や認証期限切れなどで取得できない場合は、直近値を保持します。
 
 ### AI エージェントでの開発
 

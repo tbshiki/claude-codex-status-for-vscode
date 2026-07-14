@@ -100,7 +100,6 @@ function appendWhamWindow(
     resetsAt,
     primary,
     active: usedPercent > 0,
-    severity: severityFor(usedPercent),
   });
 }
 
@@ -141,7 +140,6 @@ export function normalizeCodexRateLimits(raw: unknown): ProviderUsage {
         resetsAt,
         primary: false,
         active: true,
-        severity: severityFor(100 - individual.remainingPercent),
       });
     }
   }
@@ -174,7 +172,6 @@ function appendWindow(
     resetsAt: toIsoTimestamp(value.resetsAt),
     primary: shortLabel === '5h' || shortLabel === '7d',
     active: utilization > 0,
-    severity: severityFor(utilization),
   });
 }
 
@@ -275,10 +272,6 @@ function toIsoTimestampAfter(value: unknown): string | null {
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function severityFor(utilization: number): string {
-  return utilization >= 90 ? 'critical' : utilization >= 80 ? 'warning' : 'normal';
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

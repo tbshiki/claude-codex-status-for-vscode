@@ -102,6 +102,20 @@
           ],
           "default": "remaining",
           "description": "パーセント表示の種類。Claude と Codex の両方に共通で適用され、ホバー内のリンクからも切り替えできます。"
+        },
+        "claudeCodexStatus.warningRemainingPercent": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "いずれかの枠の残量がこの割合(%)を下回ると、ステータスバーを警告色(黄系)にし、ホバーに $(warning) を表示します。0 で無効。"
+        },
+        "claudeCodexStatus.criticalRemainingPercent": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "いずれかの枠の残量がこの割合(%)を下回ると、ステータスバーをエラー色(赤系)にし、ホバーに $(error) を表示します。0 で無効。"
         }
       }
     }

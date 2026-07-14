@@ -154,23 +154,22 @@ function mapLimit(l: RawLimit): UsageLimit {
   const utilization = clampPercent(l.percent);
   const resetsAt = l.resets_at ?? null;
   const active = l.is_active ?? false;
-  const severity = l.severity ?? 'normal';
   const model = sanitizeApiText(l.scope?.model?.display_name);
 
   switch (l.kind) {
     case 'session':
-      return limit('セッション(5h)', '5h', utilization, resetsAt, true, active, severity);
+      return limit('セッション(5h)', '5h', utilization, resetsAt, true, active);
     case 'weekly_all':
-      return limit('週(全体)', '7d', utilization, resetsAt, true, active, severity);
+      return limit('週(全体)', '7d', utilization, resetsAt, true, active);
     case 'weekly_scoped':
       if (model) {
-        return limit(`週(${model})`, `${model} 7d`, utilization, resetsAt, false, active, severity);
+        return limit(`週(${model})`, `${model} 7d`, utilization, resetsAt, false, active);
       }
-      return limit('週(スコープ)', 'wk', utilization, resetsAt, false, active, severity);
+      return limit('週(スコープ)', 'wk', utilization, resetsAt, false, active);
     default: {
       // 未知の種類も表示だけはできるよう拾う(フェイルソフト)。
       const name = model ?? sanitizeApiText(l.kind) ?? '不明';
-      return limit(name, name, utilization, resetsAt, false, active, severity);
+      return limit(name, name, utilization, resetsAt, false, active);
     }
   }
 }
@@ -197,12 +196,12 @@ function legacyLimits(raw: RawUsageResponse): UsageLimit[] {
   const out: UsageLimit[] = [];
   if (raw.five_hour) {
     out.push(
-      limit('セッション(5h)', '5h', clampPercent(raw.five_hour.utilization), raw.five_hour.resets_at ?? null, true, true, 'normal')
+      limit('セッション(5h)', '5h', clampPercent(raw.five_hour.utilization), raw.five_hour.resets_at ?? null, true, true)
     );
   }
   if (raw.seven_day) {
     out.push(
-      limit('週(全体)', '7d', clampPercent(raw.seven_day.utilization), raw.seven_day.resets_at ?? null, true, true, 'normal')
+      limit('週(全体)', '7d', clampPercent(raw.seven_day.utilization), raw.seven_day.resets_at ?? null, true, true)
     );
   }
   return out;
@@ -222,10 +221,9 @@ function limit(
   utilization: number,
   resetsAt: string | null,
   primary: boolean,
-  active: boolean,
-  severity: string
+  active: boolean
 ): UsageLimit {
-  return { label, shortLabel, utilization, resetsAt, primary, active, severity };
+  return { label, shortLabel, utilization, resetsAt, primary, active };
 }
 
 /**

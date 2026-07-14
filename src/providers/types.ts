@@ -26,8 +26,6 @@ export interface UsageLimit {
   primary: boolean;
   /** 消費が始まっている等、現在有効な枠か(バー表示の判断に使う)。 */
   active: boolean;
-  /** severity(normal/warning/critical 等)。参考情報。 */
-  severity: string;
 }
 
 export interface ProviderUsage {
