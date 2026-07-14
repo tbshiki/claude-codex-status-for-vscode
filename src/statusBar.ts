@@ -40,6 +40,14 @@ const BACKOFF_CAP_MS = 15 * 60_000;
 const MANUAL_MIN_INTERVAL_MS = 15_000;
 
 /**
+ * 設定保存失敗時の案内。拡張機能を VSIX で更新した直後は、新しい設定定義が
+ * 未登録のまま「登録済みの構成ではない」と拒否されることがあり、
+ * ウィンドウの再読み込みで解消する。
+ */
+const SAVE_FAILURE_HINT =
+  '(拡張機能を更新した直後の場合、ウィンドウの再読み込みで解消することがあります。表示自体は切替済みです)';
+
+/**
  * 複数プロバイダの残量を1つのステータスバー項目に統合表示する。
  * 各プロバイダの状態は独立して保持し、片方の失敗が他方の表示を壊さない。
  */
@@ -65,10 +73,11 @@ export class StatusBarManager {
   constructor(private readonly providers: UsageProvider[]) {
     providers.forEach((p, index) => {
       // 定義順(Claude→Codex)で左から並ぶよう優先度を下げていく。
-      // 差を極小にして、間に他拡張の項目が割り込まないようにする。
+      // 優先度 100 ちょうどを使う他拡張(Live Server 等)より僅かに上に
+      // 置き、かつ差を極小にして、2項目の間に割り込まれないようにする。
       const item = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Right,
-        100 - index * 1e-6
+        100 + (providers.length - index) * 1e-9
       );
       item.command = 'claudeCodexStatus.refresh';
       this.items.set(p.id, item);
@@ -142,7 +151,8 @@ export class StatusBarManager {
     } catch (err) {
       // 保存できなくても今セッションの表示は切替済み。原因だけ通知する。
       void vscode.window.showWarningMessage(
-        `表示モードを設定(displayMode)へ保存できませんでした: ${errorMessage(err)}`
+        `表示モードを設定(displayMode)へ保存できませんでした: ${errorMessage(err)}` +
+          SAVE_FAILURE_HINT
       );
     }
   }
@@ -171,7 +181,8 @@ export class StatusBarManager {
         .update('statusBarAlertColors', next, vscode.ConfigurationTarget.Global);
     } catch (err) {
       void vscode.window.showWarningMessage(
-        `警告色の設定(statusBarAlertColors)へ保存できませんでした: ${errorMessage(err)}`
+        `警告色の設定(statusBarAlertColors)へ保存できませんでした: ${errorMessage(err)}` +
+          SAVE_FAILURE_HINT
       );
     }
   }
