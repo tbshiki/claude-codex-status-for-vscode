@@ -14,6 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const status = manager;
 
   const diagnostics = vscode.window.createOutputChannel('Claude & Codex Status');
+  let configRestartTimer: NodeJS.Timeout | undefined;
 
   context.subscriptions.push(
     diagnostics,
@@ -37,9 +38,15 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('claudeCodexStatus')) {
-        status.restartPolling();
+        // 設定編集中はイベントが連続しうるため、少し待ってから1回だけ再始動する
+        // (restartPolling は即時取得を伴うので、連打で API を叩かない)。
+        if (configRestartTimer) {
+          clearTimeout(configRestartTimer);
+        }
+        configRestartTimer = setTimeout(() => status.restartPolling(), 500);
       }
-    })
+    }),
+    { dispose: () => configRestartTimer && clearTimeout(configRestartTimer) }
   );
 
   status.start();

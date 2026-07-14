@@ -214,7 +214,7 @@ async function requestWhamUsage(
   extensionVersion: string
 ): Promise<unknown> {
   const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CODEX_REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), CODEX_REQUEST_TIMEOUT_MS);
   try {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${auth.accessToken}`,
@@ -245,7 +245,9 @@ async function requestWhamUsage(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Codex の使用状況取得がタイムアウトしました');
     }
-    throw new Error('Codex の使用状況を取得できませんでした');
+    // 原因(fetch failed 等)をツールチップで確認できるよう残す。トークンは含まれない。
+    const cause = err instanceof Error ? err.message : String(err);
+    throw new Error(`Codex の使用状況を取得できませんでした (${cause})`);
   } finally {
     clearTimeout(timer);
   }

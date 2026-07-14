@@ -76,7 +76,7 @@ export class StatusBarManager {
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
     const intervalSec = Math.max(
       MIN_INTERVAL_SEC,
-      cfg.get<number>('pollIntervalSeconds', 60)
+      cfg.get<number>('pollIntervalSeconds', 300)
     );
     void this.refreshAll();
     this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
@@ -346,10 +346,16 @@ function limitsTable(usage: ProviderUsage): string {
 /**
  * API 由来の文字列(モデル名など)を Markdown へ埋め込む前のエスケープ。
  * テーブルのセル崩れ(`|`)、リンク・強調などの記法、`$(...)` テーマアイコンの
- * 注入を防ぐ。`(` `)` を潰すことで `$(icon)` も無効化される。
+ * 注入を防ぐ。
+ *
+ * `\(` は Markdown パース時に `(` へ戻り、その後にアイコン置換が走るため、
+ * `(` のエスケープだけでは `$(icon)` を無効化できない。パース後のテキストが
+ * `\$(icon)`(アイコン置換のリテラル扱い)になるよう、`$` の前に `\\` を足す。
  */
 function escapeMarkdown(text: string): string {
-  return text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
+  return text
+    .replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&')
+    .replace(/\$(?=\\\()/g, '\\\\$');
 }
 
 /** 「▰▰▰▰▱▱▱▱▱▱ 残量 62%」形式のメーター付きセル。未開始の枠は「-」。 */

@@ -36,6 +36,9 @@ interface RawUsageResponse {
   limits?: RawLimit[];
 }
 
+/** 使用状況レスポンスの受信上限。通常は数KBのため、異常応答からメモリを守る保険。 */
+const MAX_RESPONSE_BYTES = 1_000_000;
+
 /**
  * Claude Code の OAuth 認証情報を使い、レート制限枠の利用率を取得する。
  * エンドポイントとヘッダは非公式のため、失敗時は例外に委ねてフェイルソフトにする。
@@ -56,7 +59,7 @@ export class ClaudeProvider implements UsageProvider {
    * レスポンス本体にトークンは含まれない。
    */
   async fetchRaw(): Promise<unknown> {
-    const token = this.readAccessToken();
+    const token = await this.readAccessToken();
     if (!token) {
       throw new NotAuthenticatedError(
         'credentials.json からトークンを取得できませんでした。claude login を確認してください。'
@@ -74,10 +77,11 @@ export class ClaudeProvider implements UsageProvider {
     return path.join(os.homedir(), '.claude', '.credentials.json');
   }
 
-  private readAccessToken(): string | undefined {
+  private async readAccessToken(): Promise<string | undefined> {
     const credPath = this.getCredentialsPath();
     try {
-      const rawText = fs.readFileSync(credPath, 'utf8');
+      // ポーリングごとに呼ばれるため、拡張ホストをブロックしない非同期読み込みにする。
+      const rawText = await fs.promises.readFile(credPath, 'utf8');
       const json = JSON.parse(rawText);
       return json?.claudeAiOauth?.accessToken;
     } catch {
@@ -100,7 +104,12 @@ export class ClaudeProvider implements UsageProvider {
         },
         (res) => {
           let data = '';
-          res.on('data', (chunk) => (data += chunk));
+          res.on('data', (chunk) => {
+            data += chunk;
+            if (data.length > MAX_RESPONSE_BYTES) {
+              req.destroy(new Error('レスポンスサイズが上限を超えました'));
+            }
+          });
           res.on('end', () => {
             const status = res.statusCode ?? 0;
             if (status >= 200 && status < 300) {
@@ -142,7 +151,7 @@ function toLimits(raw: RawUsageResponse): UsageLimit[] {
 }
 
 function mapLimit(l: RawLimit): UsageLimit {
-  const utilization = Math.round(l.percent ?? 0);
+  const utilization = clampPercent(l.percent);
   const resetsAt = l.resets_at ?? null;
   const active = l.is_active ?? false;
   const severity = l.severity ?? 'normal';
@@ -168,29 +177,43 @@ function mapLimit(l: RawLimit): UsageLimit {
 
 /**
  * API 由来の表示用文字列から制御文字・改行を除き、表示崩れしない長さへ丸める。
+ * この文字列は shortLabel 経由でステータスバー本文(StatusBarItem.text)にも
+ * 入り、そこでも `$(icon)` が解釈されるため、`$(` はここで分断する。
  * Markdown 記法のエスケープは表示側(statusBar)で行う。
  */
 function sanitizeApiText(value: string | null | undefined): string | undefined {
   if (typeof value !== 'string') {
     return undefined;
   }
-  const cleaned = value.replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim().slice(0, 64).trim();
-  return cleaned.length > 0 ? cleaned : undefined;
+  const cleaned = value
+    .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
+    .replace(/\$\(/g, '$ (');
+  // サロゲートペアを分断しないようコードポイント単位で丸める。
+  const truncated = [...cleaned.trim()].slice(0, 64).join('').trim();
+  return truncated.length > 0 ? truncated : undefined;
 }
 
 function legacyLimits(raw: RawUsageResponse): UsageLimit[] {
   const out: UsageLimit[] = [];
   if (raw.five_hour) {
     out.push(
-      limit('セッション(5h)', '5h', Math.round(raw.five_hour.utilization ?? 0), raw.five_hour.resets_at ?? null, true, true, 'normal')
+      limit('セッション(5h)', '5h', clampPercent(raw.five_hour.utilization), raw.five_hour.resets_at ?? null, true, true, 'normal')
     );
   }
   if (raw.seven_day) {
     out.push(
-      limit('週(全体)', '7d', Math.round(raw.seven_day.utilization ?? 0), raw.seven_day.resets_at ?? null, true, true, 'normal')
+      limit('週(全体)', '7d', clampPercent(raw.seven_day.utilization), raw.seven_day.resets_at ?? null, true, true, 'normal')
     );
   }
   return out;
+}
+
+/** API 由来の割合を 0-100 の整数へ丸める。数値でなければ 0(フェイルソフト)。 */
+function clampPercent(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function limit(
