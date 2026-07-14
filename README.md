@@ -44,3 +44,11 @@ Claude と Codex の両方を表示できます（マイルストーン M2）。
 ### AI エージェントでの開発
 
 このリポジトリでの AI エージェント（Codex / Claude Code）を使った開発体制（共通指示・スキル・セットアップ手順）は [`docs/ai-development.md`](docs/ai-development.md) を参照してください。
+
+## コントリビューション
+
+バグ報告・改善要望・修正は [Issue](https://github.com/tbshiki/claude-codex-status-for-vscode/issues) / Pull Request で歓迎します。
+
+## ライセンス
+
+[MIT License](LICENSE) — 自由に利用・改変・再配布できます。
