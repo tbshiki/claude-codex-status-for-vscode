@@ -36,6 +36,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claudeCodexStatus.toggleDisplayMode', () =>
       status.toggleDisplayMode()
     ),
+    vscode.commands.registerCommand('claudeCodexStatus.toggleAlertColors', () =>
+      status.toggleAlertColors()
+    ),
     vscode.commands.registerCommand('claudeCodexStatus.showRawUsage', () =>
       showRawUsage(claude, diagnostics)
     ),
@@ -62,6 +65,8 @@ export function activate(context: vscode.ExtensionContext): void {
       } else if (e.affectsConfiguration('claudeCodexStatus.displayMode')) {
         // settings.json の直接編集にも追随できるよう、設定値を正として同期する。
         status.syncDisplayModeFromConfig();
+      } else if (e.affectsConfiguration('claudeCodexStatus.statusBarAlertColors')) {
+        status.syncAlertColorsFromConfig();
       } else {
         status.rerender();
       }

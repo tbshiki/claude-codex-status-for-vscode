@@ -59,13 +59,16 @@ export class StatusBarManager {
    * トグルは設定保存の成否に依存させず、まずこの値で即時切替する。
    */
   private displayMode: DisplayMode | undefined;
+  /** 警告色のメモリ上の現在値。displayMode と同じ即時切替方式。 */
+  private alertColorsEnabled: boolean | undefined;
 
   constructor(private readonly providers: UsageProvider[]) {
     providers.forEach((p, index) => {
       // 定義順(Claude→Codex)で左から並ぶよう優先度を下げていく。
+      // 差を極小にして、間に他拡張の項目が割り込まないようにする。
       const item = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Right,
-        100 - index
+        100 - index * 1e-6
       );
       item.command = 'claudeCodexStatus.refresh';
       this.items.set(p.id, item);
@@ -148,6 +151,44 @@ export class StatusBarManager {
   syncDisplayModeFromConfig(): void {
     this.displayMode = undefined;
     this.render();
+  }
+
+  /**
+   * ステータスバーの警告色(黄/赤)を有効/無効に切り替える。
+   * displayMode と同様、まずメモリ上で切り替えて設定保存は後追いにする。
+   */
+  async toggleAlertColors(): Promise<void> {
+    const next = !this.currentAlertColorsEnabled();
+    this.alertColorsEnabled = next;
+    this.render();
+    vscode.window.setStatusBarMessage(
+      `ステータスバーの警告色を${next ? '有効' : '無効'}にしました`,
+      3000
+    );
+    try {
+      await vscode.workspace
+        .getConfiguration('claudeCodexStatus')
+        .update('statusBarAlertColors', next, vscode.ConfigurationTarget.Global);
+    } catch (err) {
+      void vscode.window.showWarningMessage(
+        `警告色の設定(statusBarAlertColors)へ保存できませんでした: ${errorMessage(err)}`
+      );
+    }
+  }
+
+  /** statusBarAlertColors の設定変更イベントから呼ぶ。設定値を正として同期する。 */
+  syncAlertColorsFromConfig(): void {
+    this.alertColorsEnabled = undefined;
+    this.render();
+  }
+
+  private currentAlertColorsEnabled(): boolean {
+    if (this.alertColorsEnabled !== undefined) {
+      return this.alertColorsEnabled;
+    }
+    return vscode.workspace
+      .getConfiguration('claudeCodexStatus')
+      .get<boolean>('statusBarAlertColors', true);
   }
 
   private currentDisplayMode(): DisplayMode {
@@ -278,7 +319,9 @@ export class StatusBarManager {
       }
       item.text = this.renderSegment(p, verbose, mode, thresholds);
       item.tooltip = tooltip;
-      item.color = alertColor(this.worstLevelFor(p.id, thresholds));
+      item.color = this.currentAlertColorsEnabled()
+        ? alertColor(this.worstLevelFor(p.id, thresholds))
+        : undefined;
       item.show();
     }
   }
@@ -346,6 +389,7 @@ export class StatusBarManager {
         'claudeCodexStatus.toggleClaudeMonitoring',
         'claudeCodexStatus.toggleCodexMonitoring',
         'claudeCodexStatus.toggleDisplayMode',
+        'claudeCodexStatus.toggleAlertColors',
       ],
     };
     tooltip.supportThemeIcons = true;
@@ -362,9 +406,11 @@ export class StatusBarManager {
     });
 
     const nextModeLabel = mode === 'remaining' ? '使用率' : '残量';
+    const colorsEnabled = this.currentAlertColorsEnabled();
     tooltip.appendMarkdown(
       '\n\n$(refresh) クリックで今すぐ更新　' +
-        `$(arrow-swap) [${nextModeLabel}表示に切替](command:claudeCodexStatus.toggleDisplayMode "パーセントの表示を残量⇔使用率で切り替え")`
+        `$(arrow-swap) [${nextModeLabel}表示に切替](command:claudeCodexStatus.toggleDisplayMode "パーセントの表示を残量⇔使用率で切り替え")　` +
+        `$(paintcan) [警告色を${colorsEnabled ? '無効化' : '有効化'}](command:claudeCodexStatus.toggleAlertColors "残量逼迫時のステータスバー文字色(黄/赤)の有効/無効")`
     );
     return tooltip;
   }

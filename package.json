@@ -52,6 +52,10 @@
         "title": "Claude & Codex: 残量表示／使用率表示を切替"
       },
       {
+        "command": "claudeCodexStatus.toggleAlertColors",
+        "title": "Claude & Codex: ステータスバーの警告色を有効／無効"
+      },
+      {
         "command": "claudeCodexStatus.showRawUsage",
         "title": "Claude & Codex: 生の使用状況を表示(診断)"
       }
@@ -116,6 +120,11 @@
           "minimum": 0,
           "maximum": 100,
           "description": "枠の残量がこの割合(%)を下回ると、ステータスバーの該当枠にエラーアイコンを付け、ホバー内の該当行を赤色の文字色にします。0 で無効。"
+        },
+        "claudeCodexStatus.statusBarAlertColors": {
+          "type": "boolean",
+          "default": true,
+          "description": "残量逼迫時にステータスバーのテキスト色を黄/赤に変更します。ホバー内のリンクからも切り替えできます(アイコンとホバー内の色には影響しません)。"
         }
       }
     }
