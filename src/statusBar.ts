@@ -261,48 +261,16 @@ export class StatusBarManager {
     const thresholds = getAlertThresholds(cfg);
 
     this.item.text = enabled
-      .map((p) => this.renderSegment(p, verbose, mode))
+      .map((p) => this.renderSegment(p, verbose, mode, thresholds))
       .join('  ');
     this.item.tooltip = this.renderTooltip(enabled, mode, thresholds);
-
-    // 残量が最も逼迫している枠に合わせて背景色を変える。テーマ標準の
-    // 警告色・エラー色のみ利用可能(任意の色は指定できない)。
-    const level = this.worstLevel(enabled, thresholds);
-    this.item.backgroundColor =
-      level === 'critical'
-        ? new vscode.ThemeColor('statusBarItem.errorBackground')
-        : level === 'warning'
-          ? new vscode.ThemeColor('statusBarItem.warningBackground')
-          : undefined;
-  }
-
-  /** 表示対象プロバイダの全枠(直近値含む)から最も重い警告レベルを返す。 */
-  private worstLevel(
-    enabled: UsageProvider[],
-    thresholds: AlertThresholds
-  ): AlertLevel {
-    let worst: AlertLevel = 'normal';
-    for (const p of enabled) {
-      const state = this.states.get(p.id);
-      const usage =
-        state?.kind === 'ok' ? state.usage : lastGood(state).usage;
-      for (const l of usage?.limits ?? []) {
-        const level = limitLevel(l, thresholds);
-        if (level === 'critical') {
-          return 'critical';
-        }
-        if (level === 'warning') {
-          worst = 'warning';
-        }
-      }
-    }
-    return worst;
   }
 
   private renderSegment(
     provider: UsageProvider,
     verbose: boolean,
-    mode: DisplayMode
+    mode: DisplayMode,
+    thresholds: AlertThresholds
   ): string {
     const state = this.states.get(provider.id) ?? { kind: 'loading' };
     const head = `${provider.icon} ${provider.label}`;
@@ -314,14 +282,14 @@ export class StatusBarManager {
       case 'notReady':
         return `${head}: 準備中`;
       case 'ok':
-        return `${head} ${formatUsage(state.usage, verbose, mode)}`;
+        return `${head} ${formatUsage(state.usage, verbose, mode, thresholds)}`;
       case 'rateLimited':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose, mode)} $(clock)`
+          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(clock)`
           : `${head}: 待機中 $(clock)`;
       case 'error':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose, mode)} $(alert)`
+          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(alert)`
           : `${head}: 取得失敗 $(alert)`;
     }
   }
@@ -344,6 +312,10 @@ export class StatusBarManager {
       ],
     };
     tooltip.supportThemeIcons = true;
+    // 逼迫枠の文字色付け(<span style="color:...">)に必要。サニタイザにより
+    // 許可されるのは span の color/background-color 等ごく一部のみで、
+    // API 由来文字列は escapeMarkdown で `<` を潰しているため注入はできない。
+    tooltip.supportHtml = true;
 
     enabled.forEach((provider, index) => {
       if (index > 0) {
@@ -439,11 +411,13 @@ export class StatusBarManager {
 function formatUsage(
   usage: ProviderUsage,
   verbose: boolean,
-  mode: DisplayMode
+  mode: DisplayMode,
+  thresholds: AlertThresholds
 ): string {
   // モデル別(Fable 等)も含め全枠を表示。": " の前後に半角スペースを入れる。
+  // ステータスバー本文は部分的な色付けができないため、逼迫はアイコンで示す。
   const parts = usage.limits.map((l) => {
-    const base = `${l.shortLabel} : ${formatPercent(l, mode)}`;
+    const base = `${l.shortLabel} : ${formatPercent(l, mode)}${alertIcon(limitLevel(l, thresholds))}`;
     return verbose && l.resetsAt ? `${base} (${formatResetIn(l.resetsAt)})` : base;
   });
   return parts.join('  ');
@@ -494,7 +468,23 @@ function usageCell(
   // メーターは表示モードによらず「残量を塗り、使用分を中抜き」で統一する。
   const remaining = 100 - l.utilization;
   const kind = mode === 'remaining' ? '残量' : '使用';
-  return `${meter(remaining)} ${kind} ${pct}${alertIcon(limitLevel(l, thresholds))}`;
+  const level = limitLevel(l, thresholds);
+  return colorize(`${meter(remaining)} ${kind} ${pct}${alertIcon(level)}`, level);
+}
+
+/**
+ * 警告レベルに応じて文字色を付ける。VS Code のサニタイザは
+ * `color:var(--vscode-…);` 形式(セミコロン必須・空白不可)のみ許可する。
+ */
+function colorize(text: string, level: AlertLevel): string {
+  if (level === 'normal') {
+    return text;
+  }
+  const color =
+    level === 'critical'
+      ? 'var(--vscode-charts-red)'
+      : 'var(--vscode-charts-yellow)';
+  return `<span style="color:${color};">${text}</span>`;
 }
 
 /** 残量率(0-100)を10段の「▰(残)▱(使用済)」バーにする。 */

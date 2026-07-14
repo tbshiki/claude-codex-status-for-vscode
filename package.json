@@ -108,14 +108,14 @@
           "default": 30,
           "minimum": 0,
           "maximum": 100,
-          "description": "いずれかの枠の残量がこの割合(%)を下回ると、ステータスバーを警告色(黄系)にし、ホバーに $(warning) を表示します。0 で無効。"
+          "description": "枠の残量がこの割合(%)を下回ると、ステータスバーの該当枠に警告アイコンを付け、ホバー内の該当行を黄色の文字色にします。0 で無効。"
         },
         "claudeCodexStatus.criticalRemainingPercent": {
           "type": "number",
           "default": 10,
           "minimum": 0,
           "maximum": 100,
-          "description": "いずれかの枠の残量がこの割合(%)を下回ると、ステータスバーをエラー色(赤系)にし、ホバーに $(error) を表示します。0 で無効。"
+          "description": "枠の残量がこの割合(%)を下回ると、ステータスバーの該当枠にエラーアイコンを付け、ホバー内の該当行を赤色の文字色にします。0 で無効。"
         }
       }
     }
