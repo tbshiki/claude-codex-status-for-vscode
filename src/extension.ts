@@ -33,17 +33,42 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claudeCodexStatus.toggleCodexMonitoring', () =>
       status.toggleProviderMonitoring('codex')
     ),
+    vscode.commands.registerCommand('claudeCodexStatus.toggleDisplayMode', () =>
+      status.toggleDisplayMode()
+    ),
+    vscode.commands.registerCommand('claudeCodexStatus.toggleAlertColors', () =>
+      status.toggleAlertColors()
+    ),
     vscode.commands.registerCommand('claudeCodexStatus.showRawUsage', () =>
       showRawUsage(claude, diagnostics)
     ),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('claudeCodexStatus')) {
+      if (!e.affectsConfiguration('claudeCodexStatus')) {
+        return;
+      }
+      // 取得動作に影響する設定だけポーリングを再始動する(即時取得を伴うため)。
+      // 表示のみの設定(displayMode / style)は API を叩かず再描画で済ませる。
+      const needsRestart = [
+        'claudeCodexStatus.pollIntervalSeconds',
+        'claudeCodexStatus.providers.claude',
+        'claudeCodexStatus.providers.codex',
+        'claudeCodexStatus.claude.credentialsPath',
+        'claudeCodexStatus.codex.authPath',
+      ].some((key) => e.affectsConfiguration(key));
+      if (needsRestart) {
         // 設定編集中はイベントが連続しうるため、少し待ってから1回だけ再始動する
         // (restartPolling は即時取得を伴うので、連打で API を叩かない)。
         if (configRestartTimer) {
           clearTimeout(configRestartTimer);
         }
         configRestartTimer = setTimeout(() => status.restartPolling(), 500);
+      } else if (e.affectsConfiguration('claudeCodexStatus.displayMode')) {
+        // settings.json の直接編集にも追随できるよう、設定値を正として同期する。
+        status.syncDisplayModeFromConfig();
+      } else if (e.affectsConfiguration('claudeCodexStatus.statusBarAlertColors')) {
+        status.syncAlertColorsFromConfig();
+      } else {
+        status.rerender();
       }
     }),
     { dispose: () => configRestartTimer && clearTimeout(configRestartTimer) }

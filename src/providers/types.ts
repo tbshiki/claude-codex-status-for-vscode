@@ -15,7 +15,10 @@ export interface UsageLimit {
   label: string;
   /** ステータスバー用の短縮ラベル(例: "5h", "7d", "Fable7d")。 */
   shortLabel: string;
-  /** 利用率(0-100、使用済みの割合)。 */
+  /**
+   * 利用率(0-100、使用済みの割合)。全プロバイダで「使用率」に統一する。
+   * 残量で返す API(Codex WHAM 等)はプロバイダ側で 100 - remaining へ変換する。
+   */
   utilization: number;
   /** ISO8601 文字列、または不明・未設定の場合は null。 */
   resetsAt: string | null;
@@ -23,10 +26,6 @@ export interface UsageLimit {
   primary: boolean;
   /** 消費が始まっている等、現在有効な枠か(バー表示の判断に使う)。 */
   active: boolean;
-  /** severity(normal/warning/critical 等)。参考情報。 */
-  severity: string;
-  /** 利用率ではなく残量を表示する枠。 */
-  percentageKind?: 'used' | 'remaining';
 }
 
 export interface ProviderUsage {

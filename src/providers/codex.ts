@@ -92,16 +92,14 @@ function appendWhamWindow(
   const shortLabel = isFiveHour ? '5h' : isSevenDay ? '7d' : primary ? '全体' : '7d';
   const label = isFiveHour ? 'セッション(5h)' : isSevenDay ? '週' : primary ? '全体' : '週';
   const resetsAt = toIsoTimestamp(value.reset_at) ?? toIsoTimestampAfter(value.reset_after_seconds);
-  const remainingPercent = 100 - usedPercent;
+  // 表示側の契約に合わせ、他プロバイダと同じ「使用率」で格納する。
   limits.push({
     label,
     shortLabel,
-    utilization: remainingPercent,
+    utilization: usedPercent,
     resetsAt,
     primary,
-    active: remainingPercent < 100,
-    severity: severityFor(usedPercent),
-    percentageKind: 'remaining',
+    active: usedPercent > 0,
   });
 }
 
@@ -142,7 +140,6 @@ export function normalizeCodexRateLimits(raw: unknown): ProviderUsage {
         resetsAt,
         primary: false,
         active: true,
-        severity: severityFor(100 - individual.remainingPercent),
       });
     }
   }
@@ -175,7 +172,6 @@ function appendWindow(
     resetsAt: toIsoTimestamp(value.resetsAt),
     primary: shortLabel === '5h' || shortLabel === '7d',
     active: utilization > 0,
-    severity: severityFor(utilization),
   });
 }
 
@@ -276,10 +272,6 @@ function toIsoTimestampAfter(value: unknown): string | null {
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function severityFor(utilization: number): string {
-  return utilization >= 90 ? 'critical' : utilization >= 80 ? 'warning' : 'normal';
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

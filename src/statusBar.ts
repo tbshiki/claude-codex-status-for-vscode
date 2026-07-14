@@ -9,6 +9,18 @@ import {
   UsageProvider,
 } from './providers/types';
 
+/** パーセントの表示種別。remaining は「あと何%使えるか」、used は「何%使ったか」。 */
+type DisplayMode = 'remaining' | 'used';
+
+/** 残量に応じた警告レベル。ステータスバーの背景色とアイコンに使う。 */
+type AlertLevel = 'normal' | 'warning' | 'critical';
+
+/** 警告レベルの境界(残量%)。remaining がこの値を下回ると各レベルになる。 */
+interface AlertThresholds {
+  warning: number;
+  critical: number;
+}
+
 type ProviderStatus =
   | { kind: 'loading' }
   | { kind: 'ok'; usage: ProviderUsage; fetchedAt: number }
@@ -28,31 +40,54 @@ const BACKOFF_CAP_MS = 15 * 60_000;
 const MANUAL_MIN_INTERVAL_MS = 15_000;
 
 /**
+ * 設定保存失敗時の案内。拡張機能を VSIX で更新した直後は、新しい設定定義が
+ * 未登録のまま「登録済みの構成ではない」と拒否されることがあり、
+ * ウィンドウの再読み込みで解消する。
+ */
+const SAVE_FAILURE_HINT =
+  '(拡張機能を更新した直後の場合、ウィンドウの再読み込みで解消することがあります。表示自体は切替済みです)';
+
+/**
  * 複数プロバイダの残量を1つのステータスバー項目に統合表示する。
  * 各プロバイダの状態は独立して保持し、片方の失敗が他方の表示を壊さない。
  */
 export class StatusBarManager {
-  private readonly item: vscode.StatusBarItem;
+  /**
+   * プロバイダごとに独立した項目を持つ。1項目のテキスト色は全体一色しか
+   * 指定できないため、逼迫したプロバイダだけ色を変えられるよう分割する。
+   */
+  private readonly items = new Map<ProviderId, vscode.StatusBarItem>();
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
   private readonly lastManualAttempt = new Map<ProviderId, number>();
   private pollTimer: NodeJS.Timeout | undefined;
+  /**
+   * 表示モードのメモリ上の現在値。undefined なら設定値に従う。
+   * トグルは設定保存の成否に依存させず、まずこの値で即時切替する。
+   */
+  private displayMode: DisplayMode | undefined;
+  /** 警告色のメモリ上の現在値。displayMode と同じ即時切替方式。 */
+  private alertColorsEnabled: boolean | undefined;
 
   constructor(private readonly providers: UsageProvider[]) {
-    this.item = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Right,
-      100
-    );
-    this.item.command = 'claudeCodexStatus.refresh';
-    for (const p of providers) {
+    providers.forEach((p, index) => {
+      // 定義順(Claude→Codex)で左から並ぶよう優先度を下げていく。
+      // 優先度 100 ちょうどを使う他拡張(Live Server 等)より僅かに上に
+      // 置き、かつ差を極小にして、2項目の間に割り込まれないようにする。
+      const item = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Right,
+        100 + (providers.length - index) * 1e-9
+      );
+      item.command = 'claudeCodexStatus.refresh';
+      this.items.set(p.id, item);
       this.states.set(p.id, { kind: 'loading' });
       this.monitoringEnabled.set(p.id, true);
-    }
+    });
   }
 
   start(): void {
-    this.item.show();
+    this.render();
     this.restartPolling();
   }
 
@@ -61,7 +96,9 @@ export class StatusBarManager {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
-    this.item.dispose();
+    for (const item of this.items.values()) {
+      item.dispose();
+    }
   }
 
   /** 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。 */
@@ -87,6 +124,92 @@ export class StatusBarManager {
     this.monitoringEnabled.set(id, !this.isMonitoringEnabled(id));
     this.restartPolling();
     this.render();
+  }
+
+  /** 表示設定(style 等)だけが変わったとき、再取得せずに描画し直す。 */
+  rerender(): void {
+    this.render();
+  }
+
+  /**
+   * 残量⇔使用率の表示を切り替える。まずメモリ上で切り替えて即時描画し、
+   * 設定への保存は後追いで行う(保存に失敗しても表示の切替は生かす)。
+   */
+  async toggleDisplayMode(): Promise<void> {
+    const next: DisplayMode =
+      this.currentDisplayMode() === 'remaining' ? 'used' : 'remaining';
+    this.displayMode = next;
+    this.render();
+    vscode.window.setStatusBarMessage(
+      `表示を「${next === 'remaining' ? '残量' : '使用率'}」に切り替えました`,
+      3000
+    );
+    try {
+      await vscode.workspace
+        .getConfiguration('claudeCodexStatus')
+        .update('displayMode', next, vscode.ConfigurationTarget.Global);
+    } catch (err) {
+      // 保存できなくても今セッションの表示は切替済み。原因だけ通知する。
+      void vscode.window.showWarningMessage(
+        `表示モードを設定(displayMode)へ保存できませんでした: ${errorMessage(err)}` +
+          SAVE_FAILURE_HINT
+      );
+    }
+  }
+
+  /** displayMode の設定変更イベントから呼ぶ。設定値を正としてメモリ側を破棄する。 */
+  syncDisplayModeFromConfig(): void {
+    this.displayMode = undefined;
+    this.render();
+  }
+
+  /**
+   * ステータスバーの警告色(黄/赤)を有効/無効に切り替える。
+   * displayMode と同様、まずメモリ上で切り替えて設定保存は後追いにする。
+   */
+  async toggleAlertColors(): Promise<void> {
+    const next = !this.currentAlertColorsEnabled();
+    this.alertColorsEnabled = next;
+    this.render();
+    vscode.window.setStatusBarMessage(
+      `ステータスバーの警告色を${next ? '有効' : '無効'}にしました`,
+      3000
+    );
+    try {
+      await vscode.workspace
+        .getConfiguration('claudeCodexStatus')
+        .update('statusBarAlertColors', next, vscode.ConfigurationTarget.Global);
+    } catch (err) {
+      void vscode.window.showWarningMessage(
+        `警告色の設定(statusBarAlertColors)へ保存できませんでした: ${errorMessage(err)}` +
+          SAVE_FAILURE_HINT
+      );
+    }
+  }
+
+  /** statusBarAlertColors の設定変更イベントから呼ぶ。設定値を正として同期する。 */
+  syncAlertColorsFromConfig(): void {
+    this.alertColorsEnabled = undefined;
+    this.render();
+  }
+
+  private currentAlertColorsEnabled(): boolean {
+    if (this.alertColorsEnabled !== undefined) {
+      return this.alertColorsEnabled;
+    }
+    return vscode.workspace
+      .getConfiguration('claudeCodexStatus')
+      .get<boolean>('statusBarAlertColors', true);
+  }
+
+  private currentDisplayMode(): DisplayMode {
+    if (this.displayMode) {
+      return this.displayMode;
+    }
+    const value = vscode.workspace
+      .getConfiguration('claudeCodexStatus')
+      .get<string>('displayMode', 'remaining');
+    return value === 'used' ? 'used' : 'remaining';
   }
 
   /**
@@ -186,22 +309,60 @@ export class StatusBarManager {
 
   private render(): void {
     const enabled = this.enabledProviders();
-    if (enabled.length === 0) {
-      this.item.hide();
-      return;
+    const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
+    const verbose = cfg.get<string>('style', 'minimal') === 'verbose';
+    const mode = this.currentDisplayMode();
+    const thresholds = getAlertThresholds(cfg);
+    // どの項目にホバーしても全プロバイダの詳細を確認できるよう共通にする。
+    const tooltip =
+      enabled.length > 0
+        ? this.renderTooltip(enabled, mode, thresholds)
+        : undefined;
+
+    for (const p of this.providers) {
+      const item = this.items.get(p.id);
+      if (!item) {
+        continue;
+      }
+      if (!enabled.includes(p)) {
+        item.hide();
+        continue;
+      }
+      item.text = this.renderSegment(p, verbose, mode, thresholds);
+      item.tooltip = tooltip;
+      item.color = this.currentAlertColorsEnabled()
+        ? alertColor(this.worstLevelFor(p.id, thresholds))
+        : undefined;
+      item.show();
     }
-    this.item.show();
-
-    const verbose =
-      vscode.workspace
-        .getConfiguration('claudeCodexStatus')
-        .get<string>('style', 'minimal') === 'verbose';
-
-    this.item.text = enabled.map((p) => this.renderSegment(p, verbose)).join('  ');
-    this.item.tooltip = this.renderTooltip(enabled);
   }
 
-  private renderSegment(provider: UsageProvider, verbose: boolean): string {
+  /** プロバイダ内の全枠(直近値含む)から最も重い警告レベルを返す。 */
+  private worstLevelFor(
+    id: ProviderId,
+    thresholds: AlertThresholds
+  ): AlertLevel {
+    const state = this.states.get(id);
+    const usage = state?.kind === 'ok' ? state.usage : lastGood(state).usage;
+    let worst: AlertLevel = 'normal';
+    for (const l of usage?.limits ?? []) {
+      const level = limitLevel(l, thresholds);
+      if (level === 'critical') {
+        return 'critical';
+      }
+      if (level === 'warning') {
+        worst = 'warning';
+      }
+    }
+    return worst;
+  }
+
+  private renderSegment(
+    provider: UsageProvider,
+    verbose: boolean,
+    mode: DisplayMode,
+    thresholds: AlertThresholds
+  ): string {
     const state = this.states.get(provider.id) ?? { kind: 'loading' };
     const head = `${provider.icon} ${provider.label}`;
     switch (state.kind) {
@@ -212,19 +373,23 @@ export class StatusBarManager {
       case 'notReady':
         return `${head}: 準備中`;
       case 'ok':
-        return `${head} ${formatUsage(state.usage, verbose)}`;
+        return `${head} ${formatUsage(state.usage, verbose, mode, thresholds)}`;
       case 'rateLimited':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose)} $(clock)`
+          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(clock)`
           : `${head}: 待機中 $(clock)`;
       case 'error':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose)} $(alert)`
+          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(alert)`
           : `${head}: 取得失敗 $(alert)`;
     }
   }
 
-  private renderTooltip(enabled: UsageProvider[]): vscode.MarkdownString {
+  private renderTooltip(
+    enabled: UsageProvider[],
+    mode: DisplayMode,
+    thresholds: AlertThresholds
+  ): vscode.MarkdownString {
     const tooltip = new vscode.MarkdownString();
     // 全コマンドを許可(true)せず、自前のコマンドだけに絞る(コマンドリンク注入対策)。
     tooltip.isTrusted = {
@@ -234,24 +399,38 @@ export class StatusBarManager {
         'claudeCodexStatus.refreshCodex',
         'claudeCodexStatus.toggleClaudeMonitoring',
         'claudeCodexStatus.toggleCodexMonitoring',
+        'claudeCodexStatus.toggleDisplayMode',
+        'claudeCodexStatus.toggleAlertColors',
       ],
     };
     tooltip.supportThemeIcons = true;
+    // 逼迫枠の文字色付け(<span style="color:...">)に必要。サニタイザにより
+    // 許可されるのは span の color/background-color 等ごく一部のみで、
+    // API 由来文字列は escapeMarkdown で `<` を潰しているため注入はできない。
+    tooltip.supportHtml = true;
 
     enabled.forEach((provider, index) => {
       if (index > 0) {
         tooltip.appendMarkdown('\n\n---\n\n');
       }
-      this.appendProviderSection(tooltip, provider);
+      this.appendProviderSection(tooltip, provider, mode, thresholds);
     });
 
-    tooltip.appendMarkdown('\n\n$(refresh) クリックで今すぐ更新');
+    const nextModeLabel = mode === 'remaining' ? '使用率' : '残量';
+    const colorsEnabled = this.currentAlertColorsEnabled();
+    tooltip.appendMarkdown(
+      '\n\n$(refresh) クリックで今すぐ更新　' +
+        `$(arrow-swap) [${nextModeLabel}表示に切替](command:claudeCodexStatus.toggleDisplayMode "パーセントの表示を残量⇔使用率で切り替え")　` +
+        `$(paintcan) [警告色を${colorsEnabled ? '無効化' : '有効化'}](command:claudeCodexStatus.toggleAlertColors "残量逼迫時のステータスバー文字色(黄/赤)の有効/無効")`
+    );
     return tooltip;
   }
 
   private appendProviderSection(
     tooltip: vscode.MarkdownString,
-    provider: UsageProvider
+    provider: UsageProvider,
+    mode: DisplayMode,
+    thresholds: AlertThresholds
   ): void {
     const state = this.states.get(provider.id) ?? { kind: 'loading' as const };
     const monitoring = this.isMonitoringEnabled(provider.id);
@@ -284,7 +463,7 @@ export class StatusBarManager {
         tooltip.appendText(state.message);
         break;
       case 'ok':
-        tooltip.appendMarkdown(`\n\n${limitsTable(state.usage)}`);
+        tooltip.appendMarkdown(`\n\n${limitsTable(state.usage, mode, thresholds)}`);
         tooltip.appendMarkdown(`\n$(history) 最終取得 ${formatTime(state.fetchedAt)}`);
         break;
       case 'rateLimited': {
@@ -294,7 +473,7 @@ export class StatusBarManager {
             '(「更新」で今すぐ再試行)'
         );
         if (state.last) {
-          tooltip.appendMarkdown(`\n\n${limitsTable(state.last)}`);
+          tooltip.appendMarkdown(`\n\n${limitsTable(state.last, mode, thresholds)}`);
           if (state.lastFetchedAt) {
             tooltip.appendMarkdown(
               `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
@@ -307,7 +486,7 @@ export class StatusBarManager {
         tooltip.appendMarkdown('\n\n$(alert) 取得エラー: ');
         tooltip.appendText(state.message);
         if (state.last) {
-          tooltip.appendMarkdown(`\n\n${limitsTable(state.last)}`);
+          tooltip.appendMarkdown(`\n\n${limitsTable(state.last, mode, thresholds)}`);
           if (state.lastFetchedAt) {
             tooltip.appendMarkdown(
               `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
@@ -323,24 +502,36 @@ export class StatusBarManager {
   }
 }
 
-function formatUsage(usage: ProviderUsage, verbose: boolean): string {
+function formatUsage(
+  usage: ProviderUsage,
+  verbose: boolean,
+  mode: DisplayMode,
+  thresholds: AlertThresholds
+): string {
   // モデル別(Fable 等)も含め全枠を表示。": " の前後に半角スペースを入れる。
+  // ステータスバー本文は部分的な色付けができないため、逼迫はアイコンで示す。
   const parts = usage.limits.map((l) => {
-    const base = `${l.shortLabel} : ${formatPercent(l)}`;
+    const base = `${l.shortLabel} : ${formatPercent(l, mode)}${alertIcon(limitLevel(l, thresholds))}`;
     return verbose && l.resetsAt ? `${base} (${formatResetIn(l.resetsAt)})` : base;
   });
   return parts.join('  ');
 }
 
 /** ツールチップ用の枠一覧を Markdown テーブルで返す。 */
-function limitsTable(usage: ProviderUsage): string {
+function limitsTable(
+  usage: ProviderUsage,
+  mode: DisplayMode,
+  thresholds: AlertThresholds
+): string {
   if (usage.limits.length === 0) {
     return '(枠情報なし)';
   }
+  const header = mode === 'remaining' ? '残量' : '使用';
   const rows = usage.limits.map(
-    (l) => `| ${escapeMarkdown(l.label)} | ${usageCell(l)} | ${resetCell(l)} |`
+    (l) =>
+      `| ${escapeMarkdown(l.label)} | ${usageCell(l, mode, thresholds)} | ${resetCell(l)} |`
   );
-  return ['| 枠 | 使用状況 | リセット |', '| :-- | :-- | :-- |', ...rows].join('\n');
+  return [`| 枠 | ${header} | リセット |`, '| :-- | :-- | :-- |', ...rows].join('\n');
 }
 
 /**
@@ -359,17 +550,35 @@ function escapeMarkdown(text: string): string {
 }
 
 /** 「▰▰▰▰▱▱▱▱▱▱ 残量 62%」形式のメーター付きセル。未開始の枠は「-」。 */
-function usageCell(l: UsageLimit): string {
-  const pct = formatPercent(l);
+function usageCell(
+  l: UsageLimit,
+  mode: DisplayMode,
+  thresholds: AlertThresholds
+): string {
+  const pct = formatPercent(l, mode);
   if (pct === '-%') {
     return '-';
   }
-  // メーターは常に「残量を塗り、使用分を中抜き」で統一する。
-  // Codex は utilization が残量率(100-使用)、Claude は使用率なので変換する。
-  const remaining =
-    l.percentageKind === 'remaining' ? l.utilization : 100 - l.utilization;
-  const kind = l.percentageKind === 'remaining' ? '残量' : '使用';
-  return `${meter(remaining)} ${kind} ${pct}${severityIcon(l.severity)}`;
+  // メーターは表示モードによらず「残量を塗り、使用分を中抜き」で統一する。
+  const remaining = 100 - l.utilization;
+  const kind = mode === 'remaining' ? '残量' : '使用';
+  const level = limitLevel(l, thresholds);
+  return colorize(`${meter(remaining)} ${kind} ${pct}${alertIcon(level)}`, level);
+}
+
+/**
+ * 警告レベルに応じて文字色を付ける。VS Code のサニタイザは
+ * `color:var(--vscode-…);` 形式(セミコロン必須・空白不可)のみ許可する。
+ */
+function colorize(text: string, level: AlertLevel): string {
+  if (level === 'normal') {
+    return text;
+  }
+  const color =
+    level === 'critical'
+      ? 'var(--vscode-charts-red)'
+      : 'var(--vscode-charts-yellow)';
+  return `<span style="color:${color};">${text}</span>`;
 }
 
 /** 残量率(0-100)を10段の「▰(残)▱(使用済)」バーにする。 */
@@ -378,14 +587,59 @@ function meter(remainingPercent: number): string {
   return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
 }
 
-function severityIcon(severity: string): string {
-  if (severity === 'critical' || severity === 'error') {
+/**
+ * ステータスバー項目のテキスト色。テーマのチャート色を使い、
+ * ホバー内の文字色(charts-yellow / charts-red)と揃える。
+ */
+function alertColor(level: AlertLevel): vscode.ThemeColor | undefined {
+  if (level === 'critical') {
+    return new vscode.ThemeColor('charts.red');
+  }
+  if (level === 'warning') {
+    return new vscode.ThemeColor('charts.yellow');
+  }
+  return undefined;
+}
+
+function alertIcon(level: AlertLevel): string {
+  if (level === 'critical') {
     return ' $(error)';
   }
-  if (severity === 'warning') {
+  if (level === 'warning') {
     return ' $(warning)';
   }
   return '';
+}
+
+/**
+ * 設定からしきい値(残量%)を読む。数値でなければ既定値(警告30/危険10)、
+ * warning < critical の逆転指定は critical に揃えて破綻を防ぐ。
+ */
+function getAlertThresholds(cfg: vscode.WorkspaceConfiguration): AlertThresholds {
+  const read = (key: string, fallback: number): number => {
+    const value = cfg.get<number>(key, fallback);
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.max(0, Math.min(100, value))
+      : fallback;
+  };
+  const critical = read('criticalRemainingPercent', 10);
+  const warning = Math.max(read('warningRemainingPercent', 30), critical);
+  return { warning, critical };
+}
+
+/** 枠単体の警告レベル。未開始の枠(リセット未設定かつ未消費)は対象外。 */
+function limitLevel(l: UsageLimit, thresholds: AlertThresholds): AlertLevel {
+  if (l.resetsAt === null && !l.active) {
+    return 'normal';
+  }
+  const remaining = 100 - l.utilization;
+  if (remaining < thresholds.critical) {
+    return 'critical';
+  }
+  if (remaining < thresholds.warning) {
+    return 'warning';
+  }
+  return 'normal';
 }
 
 function resetCell(l: UsageLimit): string {
@@ -395,11 +649,16 @@ function resetCell(l: UsageLimit): string {
   return `${formatResetIn(l.resetsAt)} (${formatResetClock(l.resetsAt)})`;
 }
 
-/** リセット時刻が未設定(枠未開始)なら「-%」、それ以外は利用率を返す。 */
-function formatPercent(l: UsageLimit): string {
-  return l.percentageKind === 'remaining' || l.resetsAt !== null
-    ? `${l.utilization}%`
-    : '-%';
+/**
+ * 表示モードに応じたパーセント文字列を返す。
+ * リセット時刻が未設定かつ未消費の枠(未開始)は「-%」。
+ */
+function formatPercent(l: UsageLimit, mode: DisplayMode): string {
+  if (l.resetsAt === null && !l.active) {
+    return '-%';
+  }
+  const value = mode === 'remaining' ? 100 - l.utilization : l.utilization;
+  return `${value}%`;
 }
 
 /**
