@@ -33,16 +33,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claudeCodexStatus.toggleCodexMonitoring', () =>
       status.toggleProviderMonitoring('codex')
     ),
-    vscode.commands.registerCommand('claudeCodexStatus.toggleDisplayMode', async () => {
-      const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
-      const next =
-        cfg.get<string>('displayMode', 'remaining') === 'remaining'
-          ? 'used'
-          : 'remaining';
-      await cfg.update('displayMode', next, vscode.ConfigurationTarget.Global);
-      // 設定変更イベント経由でも再描画されるが、体感を良くするため即時に反映する。
-      status.rerender();
-    }),
+    vscode.commands.registerCommand('claudeCodexStatus.toggleDisplayMode', () =>
+      status.toggleDisplayMode()
+    ),
     vscode.commands.registerCommand('claudeCodexStatus.showRawUsage', () =>
       showRawUsage(claude, diagnostics)
     ),
@@ -66,6 +59,9 @@ export function activate(context: vscode.ExtensionContext): void {
           clearTimeout(configRestartTimer);
         }
         configRestartTimer = setTimeout(() => status.restartPolling(), 500);
+      } else if (e.affectsConfiguration('claudeCodexStatus.displayMode')) {
+        // settings.json の直接編集にも追随できるよう、設定値を正として同期する。
+        status.syncDisplayModeFromConfig();
       } else {
         status.rerender();
       }

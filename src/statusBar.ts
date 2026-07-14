@@ -41,6 +41,11 @@ export class StatusBarManager {
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
   private readonly lastManualAttempt = new Map<ProviderId, number>();
   private pollTimer: NodeJS.Timeout | undefined;
+  /**
+   * 表示モードのメモリ上の現在値。undefined なら設定値に従う。
+   * トグルは設定保存の成否に依存させず、まずこの値で即時切替する。
+   */
+  private displayMode: DisplayMode | undefined;
 
   constructor(private readonly providers: UsageProvider[]) {
     this.item = vscode.window.createStatusBarItem(
@@ -92,9 +97,50 @@ export class StatusBarManager {
     this.render();
   }
 
-  /** 表示設定(displayMode 等)だけが変わったとき、再取得せずに描画し直す。 */
+  /** 表示設定(style 等)だけが変わったとき、再取得せずに描画し直す。 */
   rerender(): void {
     this.render();
+  }
+
+  /**
+   * 残量⇔使用率の表示を切り替える。まずメモリ上で切り替えて即時描画し、
+   * 設定への保存は後追いで行う(保存に失敗しても表示の切替は生かす)。
+   */
+  async toggleDisplayMode(): Promise<void> {
+    const next: DisplayMode =
+      this.currentDisplayMode() === 'remaining' ? 'used' : 'remaining';
+    this.displayMode = next;
+    this.render();
+    vscode.window.setStatusBarMessage(
+      `表示を「${next === 'remaining' ? '残量' : '使用率'}」に切り替えました`,
+      3000
+    );
+    try {
+      await vscode.workspace
+        .getConfiguration('claudeCodexStatus')
+        .update('displayMode', next, vscode.ConfigurationTarget.Global);
+    } catch (err) {
+      // 保存できなくても今セッションの表示は切替済み。原因だけ通知する。
+      void vscode.window.showWarningMessage(
+        `表示モードを設定(displayMode)へ保存できませんでした: ${errorMessage(err)}`
+      );
+    }
+  }
+
+  /** displayMode の設定変更イベントから呼ぶ。設定値を正としてメモリ側を破棄する。 */
+  syncDisplayModeFromConfig(): void {
+    this.displayMode = undefined;
+    this.render();
+  }
+
+  private currentDisplayMode(): DisplayMode {
+    if (this.displayMode) {
+      return this.displayMode;
+    }
+    const value = vscode.workspace
+      .getConfiguration('claudeCodexStatus')
+      .get<string>('displayMode', 'remaining');
+    return value === 'used' ? 'used' : 'remaining';
   }
 
   /**
@@ -202,8 +248,7 @@ export class StatusBarManager {
 
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
     const verbose = cfg.get<string>('style', 'minimal') === 'verbose';
-    const mode: DisplayMode =
-      cfg.get<string>('displayMode', 'remaining') === 'used' ? 'used' : 'remaining';
+    const mode = this.currentDisplayMode();
 
     this.item.text = enabled
       .map((p) => this.renderSegment(p, verbose, mode))
