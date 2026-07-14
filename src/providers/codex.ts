@@ -92,16 +92,15 @@ function appendWhamWindow(
   const shortLabel = isFiveHour ? '5h' : isSevenDay ? '7d' : primary ? '全体' : '7d';
   const label = isFiveHour ? 'セッション(5h)' : isSevenDay ? '週' : primary ? '全体' : '週';
   const resetsAt = toIsoTimestamp(value.reset_at) ?? toIsoTimestampAfter(value.reset_after_seconds);
-  const remainingPercent = 100 - usedPercent;
+  // 表示側の契約に合わせ、他プロバイダと同じ「使用率」で格納する。
   limits.push({
     label,
     shortLabel,
-    utilization: remainingPercent,
+    utilization: usedPercent,
     resetsAt,
     primary,
-    active: remainingPercent < 100,
+    active: usedPercent > 0,
     severity: severityFor(usedPercent),
-    percentageKind: 'remaining',
   });
 }
 

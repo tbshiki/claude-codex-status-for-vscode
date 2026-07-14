@@ -9,6 +9,9 @@ import {
   UsageProvider,
 } from './providers/types';
 
+/** パーセントの表示種別。remaining は「あと何%使えるか」、used は「何%使ったか」。 */
+type DisplayMode = 'remaining' | 'used';
+
 type ProviderStatus =
   | { kind: 'loading' }
   | { kind: 'ok'; usage: ProviderUsage; fetchedAt: number }
@@ -86,6 +89,11 @@ export class StatusBarManager {
   toggleProviderMonitoring(id: ProviderId): void {
     this.monitoringEnabled.set(id, !this.isMonitoringEnabled(id));
     this.restartPolling();
+    this.render();
+  }
+
+  /** 表示設定(displayMode 等)だけが変わったとき、再取得せずに描画し直す。 */
+  rerender(): void {
     this.render();
   }
 
@@ -192,16 +200,22 @@ export class StatusBarManager {
     }
     this.item.show();
 
-    const verbose =
-      vscode.workspace
-        .getConfiguration('claudeCodexStatus')
-        .get<string>('style', 'minimal') === 'verbose';
+    const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
+    const verbose = cfg.get<string>('style', 'minimal') === 'verbose';
+    const mode: DisplayMode =
+      cfg.get<string>('displayMode', 'remaining') === 'used' ? 'used' : 'remaining';
 
-    this.item.text = enabled.map((p) => this.renderSegment(p, verbose)).join('  ');
-    this.item.tooltip = this.renderTooltip(enabled);
+    this.item.text = enabled
+      .map((p) => this.renderSegment(p, verbose, mode))
+      .join('  ');
+    this.item.tooltip = this.renderTooltip(enabled, mode);
   }
 
-  private renderSegment(provider: UsageProvider, verbose: boolean): string {
+  private renderSegment(
+    provider: UsageProvider,
+    verbose: boolean,
+    mode: DisplayMode
+  ): string {
     const state = this.states.get(provider.id) ?? { kind: 'loading' };
     const head = `${provider.icon} ${provider.label}`;
     switch (state.kind) {
@@ -212,19 +226,22 @@ export class StatusBarManager {
       case 'notReady':
         return `${head}: 準備中`;
       case 'ok':
-        return `${head} ${formatUsage(state.usage, verbose)}`;
+        return `${head} ${formatUsage(state.usage, verbose, mode)}`;
       case 'rateLimited':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose)} $(clock)`
+          ? `${head} ${formatUsage(state.last, verbose, mode)} $(clock)`
           : `${head}: 待機中 $(clock)`;
       case 'error':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose)} $(alert)`
+          ? `${head} ${formatUsage(state.last, verbose, mode)} $(alert)`
           : `${head}: 取得失敗 $(alert)`;
     }
   }
 
-  private renderTooltip(enabled: UsageProvider[]): vscode.MarkdownString {
+  private renderTooltip(
+    enabled: UsageProvider[],
+    mode: DisplayMode
+  ): vscode.MarkdownString {
     const tooltip = new vscode.MarkdownString();
     // 全コマンドを許可(true)せず、自前のコマンドだけに絞る(コマンドリンク注入対策)。
     tooltip.isTrusted = {
@@ -234,6 +251,7 @@ export class StatusBarManager {
         'claudeCodexStatus.refreshCodex',
         'claudeCodexStatus.toggleClaudeMonitoring',
         'claudeCodexStatus.toggleCodexMonitoring',
+        'claudeCodexStatus.toggleDisplayMode',
       ],
     };
     tooltip.supportThemeIcons = true;
@@ -242,16 +260,21 @@ export class StatusBarManager {
       if (index > 0) {
         tooltip.appendMarkdown('\n\n---\n\n');
       }
-      this.appendProviderSection(tooltip, provider);
+      this.appendProviderSection(tooltip, provider, mode);
     });
 
-    tooltip.appendMarkdown('\n\n$(refresh) クリックで今すぐ更新');
+    const nextModeLabel = mode === 'remaining' ? '使用率' : '残量';
+    tooltip.appendMarkdown(
+      '\n\n$(refresh) クリックで今すぐ更新　' +
+        `$(arrow-swap) [${nextModeLabel}表示に切替](command:claudeCodexStatus.toggleDisplayMode "パーセントの表示を残量⇔使用率で切り替え")`
+    );
     return tooltip;
   }
 
   private appendProviderSection(
     tooltip: vscode.MarkdownString,
-    provider: UsageProvider
+    provider: UsageProvider,
+    mode: DisplayMode
   ): void {
     const state = this.states.get(provider.id) ?? { kind: 'loading' as const };
     const monitoring = this.isMonitoringEnabled(provider.id);
@@ -284,7 +307,7 @@ export class StatusBarManager {
         tooltip.appendText(state.message);
         break;
       case 'ok':
-        tooltip.appendMarkdown(`\n\n${limitsTable(state.usage)}`);
+        tooltip.appendMarkdown(`\n\n${limitsTable(state.usage, mode)}`);
         tooltip.appendMarkdown(`\n$(history) 最終取得 ${formatTime(state.fetchedAt)}`);
         break;
       case 'rateLimited': {
@@ -294,7 +317,7 @@ export class StatusBarManager {
             '(「更新」で今すぐ再試行)'
         );
         if (state.last) {
-          tooltip.appendMarkdown(`\n\n${limitsTable(state.last)}`);
+          tooltip.appendMarkdown(`\n\n${limitsTable(state.last, mode)}`);
           if (state.lastFetchedAt) {
             tooltip.appendMarkdown(
               `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
@@ -307,7 +330,7 @@ export class StatusBarManager {
         tooltip.appendMarkdown('\n\n$(alert) 取得エラー: ');
         tooltip.appendText(state.message);
         if (state.last) {
-          tooltip.appendMarkdown(`\n\n${limitsTable(state.last)}`);
+          tooltip.appendMarkdown(`\n\n${limitsTable(state.last, mode)}`);
           if (state.lastFetchedAt) {
             tooltip.appendMarkdown(
               `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
@@ -323,24 +346,29 @@ export class StatusBarManager {
   }
 }
 
-function formatUsage(usage: ProviderUsage, verbose: boolean): string {
+function formatUsage(
+  usage: ProviderUsage,
+  verbose: boolean,
+  mode: DisplayMode
+): string {
   // モデル別(Fable 等)も含め全枠を表示。": " の前後に半角スペースを入れる。
   const parts = usage.limits.map((l) => {
-    const base = `${l.shortLabel} : ${formatPercent(l)}`;
+    const base = `${l.shortLabel} : ${formatPercent(l, mode)}`;
     return verbose && l.resetsAt ? `${base} (${formatResetIn(l.resetsAt)})` : base;
   });
   return parts.join('  ');
 }
 
 /** ツールチップ用の枠一覧を Markdown テーブルで返す。 */
-function limitsTable(usage: ProviderUsage): string {
+function limitsTable(usage: ProviderUsage, mode: DisplayMode): string {
   if (usage.limits.length === 0) {
     return '(枠情報なし)';
   }
+  const header = mode === 'remaining' ? '残量' : '使用';
   const rows = usage.limits.map(
-    (l) => `| ${escapeMarkdown(l.label)} | ${usageCell(l)} | ${resetCell(l)} |`
+    (l) => `| ${escapeMarkdown(l.label)} | ${usageCell(l, mode)} | ${resetCell(l)} |`
   );
-  return ['| 枠 | 使用状況 | リセット |', '| :-- | :-- | :-- |', ...rows].join('\n');
+  return [`| 枠 | ${header} | リセット |`, '| :-- | :-- | :-- |', ...rows].join('\n');
 }
 
 /**
@@ -359,16 +387,14 @@ function escapeMarkdown(text: string): string {
 }
 
 /** 「▰▰▰▰▱▱▱▱▱▱ 残量 62%」形式のメーター付きセル。未開始の枠は「-」。 */
-function usageCell(l: UsageLimit): string {
-  const pct = formatPercent(l);
+function usageCell(l: UsageLimit, mode: DisplayMode): string {
+  const pct = formatPercent(l, mode);
   if (pct === '-%') {
     return '-';
   }
-  // メーターは常に「残量を塗り、使用分を中抜き」で統一する。
-  // Codex は utilization が残量率(100-使用)、Claude は使用率なので変換する。
-  const remaining =
-    l.percentageKind === 'remaining' ? l.utilization : 100 - l.utilization;
-  const kind = l.percentageKind === 'remaining' ? '残量' : '使用';
+  // メーターは表示モードによらず「残量を塗り、使用分を中抜き」で統一する。
+  const remaining = 100 - l.utilization;
+  const kind = mode === 'remaining' ? '残量' : '使用';
   return `${meter(remaining)} ${kind} ${pct}${severityIcon(l.severity)}`;
 }
 
@@ -395,11 +421,16 @@ function resetCell(l: UsageLimit): string {
   return `${formatResetIn(l.resetsAt)} (${formatResetClock(l.resetsAt)})`;
 }
 
-/** リセット時刻が未設定(枠未開始)なら「-%」、それ以外は利用率を返す。 */
-function formatPercent(l: UsageLimit): string {
-  return l.percentageKind === 'remaining' || l.resetsAt !== null
-    ? `${l.utilization}%`
-    : '-%';
+/**
+ * 表示モードに応じたパーセント文字列を返す。
+ * リセット時刻が未設定かつ未消費の枠(未開始)は「-%」。
+ */
+function formatPercent(l: UsageLimit, mode: DisplayMode): string {
+  if (l.resetsAt === null && !l.active) {
+    return '-%';
+  }
+  const value = mode === 'remaining' ? 100 - l.utilization : l.utilization;
+  return `${value}%`;
 }
 
 /**

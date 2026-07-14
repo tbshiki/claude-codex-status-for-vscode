@@ -48,6 +48,10 @@
         "title": "Claude & Codex: Codex自動監視を停止／再開"
       },
       {
+        "command": "claudeCodexStatus.toggleDisplayMode",
+        "title": "Claude & Codex: 残量表示／使用率表示を切替"
+      },
+      {
         "command": "claudeCodexStatus.showRawUsage",
         "title": "Claude & Codex: 生の使用状況を表示(診断)"
       }
@@ -87,7 +91,17 @@
           "type": "string",
           "enum": ["minimal", "verbose"],
           "default": "minimal",
-          "description": "ステータスバーの表示スタイル。minimal は利用率のみ、verbose はリセット残り時間も表示します。"
+          "description": "ステータスバーの表示スタイル。minimal はパーセントのみ、verbose はリセット残り時間も表示します。"
+        },
+        "claudeCodexStatus.displayMode": {
+          "type": "string",
+          "enum": ["remaining", "used"],
+          "enumDescriptions": [
+            "残量(あと何%使えるか)を表示します。",
+            "使用率(何%使ったか)を表示します。"
+          ],
+          "default": "remaining",
+          "description": "パーセント表示の種類。Claude と Codex の両方に共通で適用され、ホバー内のリンクからも切り替えできます。"
         }
       }
     }
