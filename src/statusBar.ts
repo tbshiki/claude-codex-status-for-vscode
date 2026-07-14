@@ -44,7 +44,11 @@ const MANUAL_MIN_INTERVAL_MS = 15_000;
  * 各プロバイダの状態は独立して保持し、片方の失敗が他方の表示を壊さない。
  */
 export class StatusBarManager {
-  private readonly item: vscode.StatusBarItem;
+  /**
+   * プロバイダごとに独立した項目を持つ。1項目のテキスト色は全体一色しか
+   * 指定できないため、逼迫したプロバイダだけ色を変えられるよう分割する。
+   */
+  private readonly items = new Map<ProviderId, vscode.StatusBarItem>();
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
@@ -57,19 +61,21 @@ export class StatusBarManager {
   private displayMode: DisplayMode | undefined;
 
   constructor(private readonly providers: UsageProvider[]) {
-    this.item = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Right,
-      100
-    );
-    this.item.command = 'claudeCodexStatus.refresh';
-    for (const p of providers) {
+    providers.forEach((p, index) => {
+      // 定義順(Claude→Codex)で左から並ぶよう優先度を下げていく。
+      const item = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Right,
+        100 - index
+      );
+      item.command = 'claudeCodexStatus.refresh';
+      this.items.set(p.id, item);
       this.states.set(p.id, { kind: 'loading' });
       this.monitoringEnabled.set(p.id, true);
-    }
+    });
   }
 
   start(): void {
-    this.item.show();
+    this.render();
     this.restartPolling();
   }
 
@@ -78,7 +84,9 @@ export class StatusBarManager {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
-    this.item.dispose();
+    for (const item of this.items.values()) {
+      item.dispose();
+    }
   }
 
   /** 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。 */
@@ -249,21 +257,50 @@ export class StatusBarManager {
 
   private render(): void {
     const enabled = this.enabledProviders();
-    if (enabled.length === 0) {
-      this.item.hide();
-      return;
-    }
-    this.item.show();
-
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
     const verbose = cfg.get<string>('style', 'minimal') === 'verbose';
     const mode = this.currentDisplayMode();
     const thresholds = getAlertThresholds(cfg);
+    // どの項目にホバーしても全プロバイダの詳細を確認できるよう共通にする。
+    const tooltip =
+      enabled.length > 0
+        ? this.renderTooltip(enabled, mode, thresholds)
+        : undefined;
 
-    this.item.text = enabled
-      .map((p) => this.renderSegment(p, verbose, mode, thresholds))
-      .join('  ');
-    this.item.tooltip = this.renderTooltip(enabled, mode, thresholds);
+    for (const p of this.providers) {
+      const item = this.items.get(p.id);
+      if (!item) {
+        continue;
+      }
+      if (!enabled.includes(p)) {
+        item.hide();
+        continue;
+      }
+      item.text = this.renderSegment(p, verbose, mode, thresholds);
+      item.tooltip = tooltip;
+      item.color = alertColor(this.worstLevelFor(p.id, thresholds));
+      item.show();
+    }
+  }
+
+  /** プロバイダ内の全枠(直近値含む)から最も重い警告レベルを返す。 */
+  private worstLevelFor(
+    id: ProviderId,
+    thresholds: AlertThresholds
+  ): AlertLevel {
+    const state = this.states.get(id);
+    const usage = state?.kind === 'ok' ? state.usage : lastGood(state).usage;
+    let worst: AlertLevel = 'normal';
+    for (const l of usage?.limits ?? []) {
+      const level = limitLevel(l, thresholds);
+      if (level === 'critical') {
+        return 'critical';
+      }
+      if (level === 'warning') {
+        worst = 'warning';
+      }
+    }
+    return worst;
   }
 
   private renderSegment(
@@ -491,6 +528,20 @@ function colorize(text: string, level: AlertLevel): string {
 function meter(remainingPercent: number): string {
   const filled = Math.max(0, Math.min(10, Math.round(remainingPercent / 10)));
   return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
+}
+
+/**
+ * ステータスバー項目のテキスト色。テーマのチャート色を使い、
+ * ホバー内の文字色(charts-yellow / charts-red)と揃える。
+ */
+function alertColor(level: AlertLevel): vscode.ThemeColor | undefined {
+  if (level === 'critical') {
+    return new vscode.ThemeColor('charts.red');
+  }
+  if (level === 'warning') {
+    return new vscode.ThemeColor('charts.yellow');
+  }
+  return undefined;
 }
 
 function alertIcon(level: AlertLevel): string {
