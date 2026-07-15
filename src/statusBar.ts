@@ -97,13 +97,20 @@ export class StatusBarManager {
 
   constructor(private readonly providers: UsageProvider[]) {
     providers.forEach((p, index) => {
+      // 第1引数の id は必ず項目ごとに変えること。省略すると VSCode 側で
+      // id が拡張機能ID そのものになり(extHostStatusBar の update)、
+      // 全項目が同じ id を共有する。この id はステータスバー項目の DOM の
+      // id 属性にそのまま入るため、重複した id を持つ要素が並び、
+      // 項目間でホバーを移すと詳細が出なくなる。
       // 定義順(Claude→Codex)で左から並ぶよう優先度を下げていく。
       // 優先度 100 ちょうどを使う他拡張(Live Server 等)より僅かに上に
       // 置き、かつ差を極小にして、2項目の間に割り込まれないようにする。
       const item = vscode.window.createStatusBarItem(
+        `claudeCodexStatus.${p.id}`,
         vscode.StatusBarAlignment.Right,
         100 + (providers.length - index) * 1e-9
       );
+      item.name = `${p.label} 残量`;
       item.command = 'claudeCodexStatus.refresh';
       this.items.set(p.id, item);
       this.states.set(p.id, { kind: 'loading' });
@@ -111,9 +118,11 @@ export class StatusBarManager {
     });
     // 全停止時はこれだけが残るため、プロバイダ項目と同じ位置へ置く。
     this.pausedItem = vscode.window.createStatusBarItem(
+      'claudeCodexStatus.paused',
       vscode.StatusBarAlignment.Right,
       100 + (providers.length + 1) * 1e-9
     );
+    this.pausedItem.name = 'Claude & Codex 監視停止中';
     this.pausedItem.text = PAUSED_ICON;
     // 全停止の最小表示から復帰する主導線。ここで refresh を割り当てると、
     // 隠れたまま値だけ更新され、クリックしても何も起きないように見える。
