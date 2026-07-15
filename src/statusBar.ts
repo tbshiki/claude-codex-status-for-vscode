@@ -381,14 +381,9 @@ export class StatusBarManager {
     const allPaused =
       enabled.length > 0 && !enabled.some((p) => this.isMonitoringEnabled(p.id));
 
-    // どの項目にホバーしても全プロバイダの詳細を確認できるよう共通にする。
     // 全停止時はクリックの意味が「更新」から「再開」に変わるため、案内も変える。
-    const tooltip =
-      enabled.length > 0
-        ? this.renderTooltip(enabled, mode, thresholds, allPaused)
-        : undefined;
     if (allPaused) {
-      this.pausedItem.tooltip = tooltip;
+      this.pausedItem.tooltip = this.renderTooltip(enabled, mode, thresholds, true);
       this.pausedItem.show();
     } else {
       this.pausedItem.hide();
@@ -404,7 +399,14 @@ export class StatusBarManager {
         continue;
       }
       item.text = this.renderSegment(p, verbose, mode, thresholds);
-      item.tooltip = tooltip;
+      // どの項目にホバーしても全プロバイダの詳細を出すが、ホバーした項目の
+      // プロバイダを先頭に置き、内容を項目ごとに必ず変える。並び替えは
+      // 見やすさのためだけではない: VSCode はホバーの同一性を Markdown
+      // 本文の文字列で判定し(hoverService の getHoverIdFromContent)、
+      // 表示中と同一内容の表示要求を無視するため、隣接項目が同一内容だと
+      // 項目間の移動でホバーが表示されなくなる。
+      const ordered = [p, ...enabled.filter((other) => other !== p)];
+      item.tooltip = this.renderTooltip(ordered, mode, thresholds, false);
       item.color = this.currentAlertColorsEnabled()
         ? alertColor(this.worstLevelFor(p.id, thresholds))
         : undefined;
