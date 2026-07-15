@@ -33,6 +33,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('claudeCodexStatus.toggleCodexMonitoring', () =>
       status.toggleProviderMonitoring('codex')
     ),
+    // 全停止時の最小表示(アイコン)のクリック先。コマンドパレットには出さず、
+    // ステータスバーからの復帰導線としてのみ使う。
+    vscode.commands.registerCommand('claudeCodexStatus.resumeAllMonitoring', () =>
+      status.resumeAllMonitoring()
+    ),
     vscode.commands.registerCommand('claudeCodexStatus.toggleDisplayMode', () =>
       status.toggleDisplayMode()
     ),
