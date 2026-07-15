@@ -2,7 +2,7 @@
   "name": "claude-codex-status",
   "displayName": "Claude & Codex Status",
   "description": "Claude Code と OpenAI Codex CLI のレート残量(5時間枠/週枠)をVSCodeのステータスバーに常時表示します",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -12,8 +12,12 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "capabilities": {
     "untrustedWorkspaces": {
@@ -93,13 +97,19 @@
         },
         "claudeCodexStatus.style": {
           "type": "string",
-          "enum": ["minimal", "verbose"],
+          "enum": [
+            "minimal",
+            "verbose"
+          ],
           "default": "minimal",
           "description": "ステータスバーの表示スタイル。minimal はパーセントのみ、verbose はリセット残り時間も表示します。"
         },
         "claudeCodexStatus.displayMode": {
           "type": "string",
-          "enum": ["remaining", "used"],
+          "enum": [
+            "remaining",
+            "used"
+          ],
           "enumDescriptions": [
             "残量(あと何%使えるか)を表示します。",
             "使用率(何%使ったか)を表示します。"
