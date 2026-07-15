@@ -45,6 +45,9 @@ interface AuthPresentation {
   icon: string;
 }
 
+/** 全プロバイダ停止時の最小表示。これ自体が再開用のホバー先になる。 */
+const PAUSED_ICON = '$(debug-pause)';
+
 const MIN_INTERVAL_SEC = 60;
 /** 429 バックオフの基準(初回)と上限。Retry-After があればそちらを優先。 */
 const BACKOFF_BASE_MS = 60_000;
@@ -73,6 +76,12 @@ export class StatusBarManager {
    * 指定できないため、逼迫したプロバイダだけ色を変えられるよう分割する。
    */
   private readonly items = new Map<ProviderId, vscode.StatusBarItem>();
+  /**
+   * 全プロバイダが監視停止のときだけ出す最小表示。
+   * 停止した項目はバーから消えるため、これが無いと再開用のホバー先が
+   * どこにも無くなり、設定を開くまで戻せなくなる。
+   */
+  private readonly pausedItem: vscode.StatusBarItem;
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
@@ -100,6 +109,24 @@ export class StatusBarManager {
       this.states.set(p.id, { kind: 'loading' });
       this.monitoringEnabled.set(p.id, true);
     });
+    // 全停止時はこれだけが残るため、プロバイダ項目と同じ位置へ置く。
+    this.pausedItem = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      100 + (providers.length + 1) * 1e-9
+    );
+    this.pausedItem.text = PAUSED_ICON;
+    // 全停止の最小表示から復帰する主導線。ここで refresh を割り当てると、
+    // 隠れたまま値だけ更新され、クリックしても何も起きないように見える。
+    this.pausedItem.command = 'claudeCodexStatus.resumeAllMonitoring';
+  }
+
+  /** 全プロバイダの監視を再開する。全停止時の最小表示のクリックから呼ぶ。 */
+  resumeAllMonitoring(): void {
+    for (const p of this.providers) {
+      this.monitoringEnabled.set(p.id, true);
+    }
+    this.restartPolling();
+    this.render();
   }
 
   start(): void {
@@ -115,6 +142,7 @@ export class StatusBarManager {
     for (const item of this.items.values()) {
       item.dispose();
     }
+    this.pausedItem.dispose();
   }
 
   /** 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。 */
@@ -339,18 +367,30 @@ export class StatusBarManager {
     const verbose = cfg.get<string>('style', 'minimal') === 'verbose';
     const mode = this.currentDisplayMode();
     const thresholds = getAlertThresholds(cfg);
+    // 監視停止したプロバイダはバーから消す。全部消えると再開できなくなるため、
+    // その場合だけ最小表示(アイコンのみ)へ畳んでホバー先を残す。
+    const allPaused =
+      enabled.length > 0 && !enabled.some((p) => this.isMonitoringEnabled(p.id));
+
     // どの項目にホバーしても全プロバイダの詳細を確認できるよう共通にする。
+    // 全停止時はクリックの意味が「更新」から「再開」に変わるため、案内も変える。
     const tooltip =
       enabled.length > 0
-        ? this.renderTooltip(enabled, mode, thresholds)
+        ? this.renderTooltip(enabled, mode, thresholds, allPaused)
         : undefined;
+    if (allPaused) {
+      this.pausedItem.tooltip = tooltip;
+      this.pausedItem.show();
+    } else {
+      this.pausedItem.hide();
+    }
 
     for (const p of this.providers) {
       const item = this.items.get(p.id);
       if (!item) {
         continue;
       }
-      if (!enabled.includes(p)) {
+      if (!enabled.includes(p) || !this.isMonitoringEnabled(p.id)) {
         item.hide();
         continue;
       }
@@ -420,7 +460,8 @@ export class StatusBarManager {
   private renderTooltip(
     enabled: UsageProvider[],
     mode: DisplayMode,
-    thresholds: AlertThresholds
+    thresholds: AlertThresholds,
+    allPaused: boolean
   ): vscode.MarkdownString {
     const tooltip = new vscode.MarkdownString();
     // 全コマンドを許可(true)せず、自前のコマンドだけに絞る(コマンドリンク注入対策)。
@@ -431,6 +472,7 @@ export class StatusBarManager {
         'claudeCodexStatus.refreshCodex',
         'claudeCodexStatus.toggleClaudeMonitoring',
         'claudeCodexStatus.toggleCodexMonitoring',
+        'claudeCodexStatus.resumeAllMonitoring',
         'claudeCodexStatus.toggleDisplayMode',
         'claudeCodexStatus.toggleAlertColors',
       ],
@@ -440,6 +482,13 @@ export class StatusBarManager {
     // 許可されるのは span の color/background-color 等ごく一部のみで、
     // API 由来文字列は escapeMarkdown で `<` を潰しているため注入はできない。
     tooltip.supportHtml = true;
+
+    if (allPaused) {
+      // バーはアイコンだけになっているため、まず今の状態を明示する。
+      tooltip.appendMarkdown(
+        `${PAUSED_ICON} **全ての監視を停止中** — ステータスバーの表示を畳んでいます\n\n---\n\n`
+      );
+    }
 
     enabled.forEach((provider, index) => {
       if (index > 0) {
@@ -451,7 +500,9 @@ export class StatusBarManager {
     const nextModeLabel = mode === 'remaining' ? '使用率' : '残量';
     const colorsEnabled = this.currentAlertColorsEnabled();
     tooltip.appendMarkdown(
-      '\n\n$(refresh) クリックで今すぐ更新　' +
+      (allPaused
+        ? '\n\n$(play) クリックで全ての監視を再開　'
+        : '\n\n$(refresh) クリックで今すぐ更新　') +
         `$(arrow-swap) [${nextModeLabel}表示に切替](command:claudeCodexStatus.toggleDisplayMode "パーセントの表示を残量⇔使用率で切り替え")　` +
         `$(paintcan) [警告色を${colorsEnabled ? '無効化' : '有効化'}](command:claudeCodexStatus.toggleAlertColors "残量逼迫時のステータスバー文字色(黄/赤)の有効/無効")`
     );
