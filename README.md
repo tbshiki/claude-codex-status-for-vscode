@@ -40,7 +40,7 @@ src/
 docs/requirements.md    # 要件定義書
 ```
 
-Claude と Codex の両方を表示できます（マイルストーン M2）。Codex は `~/.codex/auth.json` の認証情報を使い、使用状況 API から直接取得します。パーセントは Claude / Codex 共通の基準で表示され、既定は残量（あと何%使えるか）です。設定 `claudeCodexStatus.displayMode` またはホバー詳細内の切替リンクで、残量表示と使用率表示をいつでも切り替えられます。枠の残量が既定で30%を下回ると該当プロバイダのステータスバー表示が黄色の文字色+該当枠に ⚠、10%を下回ると赤の文字色+エラーアイコンになり、ホバー内の該当行も同じ色で表示されます(しきい値は `claudeCodexStatus.warningRemainingPercent` / `criticalRemainingPercent` で変更可、色はテーマのチャート色に準拠)。ステータスバーの項目は Claude / Codex で独立しているため、逼迫していない側の色は変わりません。色が不要な場合はホバー内のリンクまたは設定 `claudeCodexStatus.statusBarAlertColors` で無効化できます。Codex の5時間枠がない場合は `全体` と表示します。
+Claude と Codex の両方を表示できます（マイルストーン M2）。Codex は `~/.codex/auth.json` の認証情報を使い、使用状況 API から直接取得します。パーセントは Claude / Codex 共通の基準で表示され、既定は残量（あと何%使えるか）です。設定 `claudeCodexStatus.displayMode` またはホバー詳細内の切替リンクで、残量表示と使用率表示をいつでも切り替えられます。枠の残量が既定で30%を下回ると該当プロバイダのステータスバー表示が黄色の文字色+該当枠に ⚠、10%を下回ると赤の文字色+エラーアイコンになり、ホバー内の該当行も同じ色で表示されます(しきい値は `claudeCodexStatus.warningRemainingPercent` / `criticalRemainingPercent` で変更可、色はテーマのチャート色に準拠)。ステータスバーの項目は Claude / Codex で独立しているため、逼迫していない側の色は変わりません。色が不要な場合はホバー内のリンクまたは設定 `claudeCodexStatus.statusBarAlertColors` で無効化できます。Codex の5時間枠がない場合は `全体` と表示します。ホバー詳細はどちらの項目でも両プロバイダ分を表示し、ホバーした項目のプロバイダが先頭になります。
 
 ### 監視の停止と再開
 
