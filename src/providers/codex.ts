@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
+  NetworkError,
   NotAuthenticatedError,
   ProviderUsage,
   RateLimitError,
@@ -179,15 +180,32 @@ async function readCodexAuth(authPath: string): Promise<{ accessToken: string; a
   let raw: string;
   try {
     raw = await readFile(authPath, 'utf8');
-  } catch {
-    throw new NotAuthenticatedError('Codex の auth.json が見つかりません。codex login を確認してください。');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new NotAuthenticatedError(
+        'credentialsMissing',
+        `Codex の auth.json が見つかりません (${authPath})`,
+        'Codex CLI で codex login を実行してください。' +
+          '保存先が異なる場合は設定 claudeCodexStatus.codex.authPath でパスを指定できます。'
+      );
+    }
+    throw new NotAuthenticatedError(
+      'credentialsUnreadable',
+      `Codex の auth.json を読み取れませんでした (${code ?? (err instanceof Error ? err.message : String(err))})`,
+      'ファイルのアクセス権限を確認してください。'
+    );
   }
 
   let auth: CodexAuthFile;
   try {
     auth = JSON.parse(raw) as CodexAuthFile;
   } catch {
-    throw new NotAuthenticatedError('Codex の auth.json を読み取れませんでした。');
+    throw new NotAuthenticatedError(
+      'credentialsInvalid',
+      `Codex の auth.json の JSON を解析できませんでした (${authPath})`,
+      'ファイルが壊れている可能性があります。codex login をやり直すと再作成されます。'
+    );
   }
   const accessToken = typeof auth.tokens?.access_token === 'string'
     ? auth.tokens.access_token
@@ -200,7 +218,11 @@ async function readCodexAuth(authPath: string): Promise<{ accessToken: string; a
       ? auth.account_id
       : undefined;
   if (!accessToken) {
-    throw new NotAuthenticatedError('Codex のアクセストークンが見つかりません。codex login を確認してください。');
+    throw new NotAuthenticatedError(
+      'tokenMissing',
+      'Codex の auth.json にアクセストークンがありません',
+      'codex login で再認証してください。'
+    );
   }
   return { accessToken, accountId };
 }
@@ -220,33 +242,56 @@ async function requestWhamUsage(
     if (auth.accountId) {
       headers['ChatGPT-Account-Id'] = auth.accountId;
     }
-    const response = await fetch('https://chatgpt.com/backend-api/wham/usage', {
-      headers,
-      signal: controller.signal,
-    });
+    const response = await connect(headers, controller.signal);
     if (response.status === 401 || response.status === 403) {
-      throw new NotAuthenticatedError('Codex の認証が切れています。codex login を確認してください。');
+      throw new NotAuthenticatedError(
+        'tokenRejected',
+        `Codex のアクセストークンが拒否されました (HTTP ${response.status})`,
+        'トークンが失効している可能性があります。codex login で再認証してください。'
+      );
     }
     if (response.status === 429) {
       throw new RateLimitError('Codex のレート制限により取得できませんでした');
     }
     if (!response.ok) {
-      throw new Error(`Codex の使用状況取得に失敗しました (${response.status})`);
+      throw new Error(`Codex の使用状況取得に失敗しました (HTTP ${response.status})`);
     }
-    return await response.json();
-  } catch (err) {
-    if (err instanceof NotAuthenticatedError || err instanceof RateLimitError) {
-      throw err;
+    try {
+      return await response.json();
+    } catch (err) {
+      if (isAbort(err)) {
+        throw new NetworkError('Codex の使用状況取得がタイムアウトしました');
+      }
+      // 応答は届いているので接続の問題ではない。API 仕様変更の疑いとして扱う。
+      throw new Error('Codex のレスポンスのJSON解析に失敗しました');
     }
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Codex の使用状況取得がタイムアウトしました');
-    }
-    // 原因(fetch failed 等)をツールチップで確認できるよう残す。トークンは含まれない。
-    const cause = err instanceof Error ? err.message : String(err);
-    throw new Error(`Codex の使用状況を取得できませんでした (${cause})`);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * fetch 自体の失敗(DNS・接続拒否・TLS・タイムアウト)だけを NetworkError にする。
+ * HTTP 応答が返った時点の異常は呼び出し側で HTTP ステータスとして扱う。
+ */
+async function connect(
+  headers: Record<string, string>,
+  signal: AbortSignal
+): Promise<Response> {
+  try {
+    return await fetch('https://chatgpt.com/backend-api/wham/usage', { headers, signal });
+  } catch (err) {
+    if (isAbort(err)) {
+      throw new NetworkError('Codex の使用状況取得がタイムアウトしました');
+    }
+    // 原因(fetch failed 等)はツールチップで確認できるよう残す。トークンは含まれない。
+    const cause = err instanceof Error ? err.message : String(err);
+    throw new NetworkError(`Codex に接続できませんでした (${cause})`);
+  }
+}
+
+function isAbort(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError';
 }
 
 function resolveCodexAuthPath(): string {

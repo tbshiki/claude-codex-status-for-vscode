@@ -34,13 +34,48 @@ export interface ProviderUsage {
 }
 
 /**
- * 認証情報が見つからない/読めない場合に投げる。
- * 表示側は「未ログイン」相当の案内に振り分ける。
+ * 認証まわりで取得できなかった原因の分類。
+ * 表示側はこれだけを見て文言・アイコンを切り分けるため、
+ * 新しい原因を足すときは statusBar 側の分岐も揃える。
+ */
+export type AuthFailureReason =
+  /** 認証情報ファイルが存在しない(未ログイン、または保管場所が違う)。 */
+  | 'credentialsMissing'
+  /** ファイルはあるが権限などで読み取れない。 */
+  | 'credentialsUnreadable'
+  /** ファイルは読めたが JSON として壊れている。 */
+  | 'credentialsInvalid'
+  /** JSON は読めたが目的のトークン項目が無い(APIキー運用など)。 */
+  | 'tokenMissing'
+  /** トークンはあるが API に拒否された(401/403 = 失効・剥奪)。 */
+  | 'tokenRejected';
+
+/**
+ * 認証情報が無い/読めない/受け付けられない場合に投げる。
+ * 表示側は reason で「未ログイン」「要再ログイン」「認証情報エラー」に振り分ける。
+ * message と hint は利用者にそのまま見せるため、トークンを含めてはならない。
  */
 export class NotAuthenticatedError extends Error {
-  constructor(message: string) {
+  constructor(
+    readonly reason: AuthFailureReason,
+    message: string,
+    /** 対処方法の案内(例: `claude login` を実行)。 */
+    readonly hint?: string
+  ) {
     super(message);
     this.name = 'NotAuthenticatedError';
+  }
+}
+
+/**
+ * ネットワーク層で到達できなかった場合に投げる(DNS・接続拒否・TLS・タイムアウト)。
+ * HTTP 応答が返ってきた上でのエラーは含めない(それは通常の Error)。
+ * 表示側は「接続不可」として、API 側の異常と区別する。
+ */
+export class NetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NetworkError';
   }
 }
 
@@ -78,9 +113,11 @@ export interface UsageProvider {
 
   /**
    * 残量を取得する。取得できない場合は例外を投げる。
-   * - 認証不可: NotAuthenticatedError
+   * - 認証不可: NotAuthenticatedError(reason で原因を区別)
    * - 未実装: ProviderNotReadyError
-   * - その他(ネットワーク/429/パース等): 通常の Error
+   * - レート制限: RateLimitError
+   * - 到達不能: NetworkError
+   * - その他(HTTP エラー/パース等): 通常の Error
    * 秘密情報(トークン等)を例外メッセージに含めてはならない。
    */
   fetchUsage(): Promise<ProviderUsage>;

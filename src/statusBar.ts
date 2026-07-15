@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import {
+  AuthFailureReason,
+  NetworkError,
   NotAuthenticatedError,
   ProviderId,
   ProviderNotReadyError,
@@ -21,13 +23,27 @@ interface AlertThresholds {
   critical: number;
 }
 
+/**
+ * 表示側が扱う状態。取得できない理由ごとに分け、案内文を切り分ける。
+ * 認証系(unauthenticated)は利用者の操作が必要で、直近値を出すと
+ * 「取れている」と誤解させるため、値は持たせない。
+ */
 type ProviderStatus =
   | { kind: 'loading' }
   | { kind: 'ok'; usage: ProviderUsage; fetchedAt: number }
-  | { kind: 'unauthenticated'; message: string }
+  | { kind: 'unauthenticated'; reason: AuthFailureReason; message: string; hint?: string }
   | { kind: 'notReady'; message: string }
   | { kind: 'rateLimited'; retryAt: number; last?: ProviderUsage; lastFetchedAt?: number }
+  | { kind: 'offline'; message: string; last?: ProviderUsage; lastFetchedAt?: number }
   | { kind: 'error'; message: string; last?: ProviderUsage; lastFetchedAt?: number };
+
+/** 認証系エラーの見せ方。バー本文・ホバー見出し・アイコンを1か所で決める。 */
+interface AuthPresentation {
+  /** バー本文の文言(例: "要再ログイン")。 */
+  label: string;
+  /** バー本文とホバー見出しに付けるアイコン。未ログインは無印にする。 */
+  icon: string;
+}
 
 const MIN_INTERVAL_SEC = 60;
 /** 429 バックオフの基準(初回)と上限。Retry-After があればそちらを優先。 */
@@ -285,10 +301,20 @@ export class StatusBarManager {
         this.backoff.delete(provider.id);
         this.states.set(provider.id, {
           kind: 'unauthenticated',
+          reason: err.reason,
           message: err.message,
+          hint: err.hint,
         });
       } else if (err instanceof ProviderNotReadyError) {
         this.states.set(provider.id, { kind: 'notReady', message: err.message });
+      } else if (err instanceof NetworkError) {
+        // 到達不能は一時的なことが多い。直近値を残して復帰時に自然に戻す。
+        this.states.set(provider.id, {
+          kind: 'offline',
+          message: err.message,
+          last,
+          lastFetchedAt,
+        });
       } else {
         this.states.set(provider.id, {
           kind: 'error',
@@ -368,8 +394,10 @@ export class StatusBarManager {
     switch (state.kind) {
       case 'loading':
         return `${head} …`;
-      case 'unauthenticated':
-        return `${head}: 未ログイン`;
+      case 'unauthenticated': {
+        const auth = authPresentation(state.reason);
+        return `${head}: ${auth.label}${auth.icon ? ` ${auth.icon}` : ''}`;
+      }
       case 'notReady':
         return `${head}: 準備中`;
       case 'ok':
@@ -378,6 +406,10 @@ export class StatusBarManager {
         return state.last
           ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(clock)`
           : `${head}: 待機中 $(clock)`;
+      case 'offline':
+        return state.last
+          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(cloud-offline)`
+          : `${head}: 接続不可 $(cloud-offline)`;
       case 'error':
         return state.last
           ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(alert)`
@@ -454,10 +486,17 @@ export class StatusBarManager {
       case 'loading':
         tooltip.appendMarkdown('\n\n$(sync~spin) 取得中…');
         break;
-      case 'unauthenticated':
-        tooltip.appendMarkdown('\n\n$(account) 未ログイン: ');
+      case 'unauthenticated': {
+        const auth = authPresentation(state.reason);
+        tooltip.appendMarkdown(`\n\n${auth.icon || '$(account)'} ${auth.label}: `);
         tooltip.appendText(state.message);
+        if (state.hint) {
+          // 案内文は原因ごとに異なるため、プロバイダから受け取ったものをそのまま出す。
+          tooltip.appendMarkdown('\n\n$(lightbulb) ');
+          tooltip.appendText(state.hint);
+        }
         break;
+      }
       case 'notReady':
         tooltip.appendMarkdown('\n\n$(tools) 準備中: ');
         tooltip.appendText(state.message);
@@ -472,33 +511,63 @@ export class StatusBarManager {
           `\n\n$(clock) レート制限(429)中 — 約${secs}秒後に自動再取得` +
             '(「更新」で今すぐ再試行)'
         );
-        if (state.last) {
-          tooltip.appendMarkdown(`\n\n${limitsTable(state.last, mode, thresholds)}`);
-          if (state.lastFetchedAt) {
-            tooltip.appendMarkdown(
-              `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
-            );
-          }
-        }
+        appendLastKnown(tooltip, state.last, state.lastFetchedAt, mode, thresholds);
         break;
       }
+      case 'offline':
+        tooltip.appendMarkdown('\n\n$(cloud-offline) 接続不可: ');
+        tooltip.appendText(state.message);
+        tooltip.appendMarkdown(
+          '\n\n$(lightbulb) ネットワーク接続やプロキシ設定を確認してください。' +
+            '復帰すれば次回の取得で自動的に戻ります。'
+        );
+        appendLastKnown(tooltip, state.last, state.lastFetchedAt, mode, thresholds);
+        break;
       case 'error':
         tooltip.appendMarkdown('\n\n$(alert) 取得エラー: ');
         tooltip.appendText(state.message);
-        if (state.last) {
-          tooltip.appendMarkdown(`\n\n${limitsTable(state.last, mode, thresholds)}`);
-          if (state.lastFetchedAt) {
-            tooltip.appendMarkdown(
-              `\n$(history) 最終正常取得 ${formatTime(state.lastFetchedAt)}`
-            );
-          }
-        }
+        appendLastKnown(tooltip, state.last, state.lastFetchedAt, mode, thresholds);
         break;
     }
   }
 
   private isMonitoringEnabled(id: ProviderId): boolean {
     return this.monitoringEnabled.get(id) ?? true;
+  }
+}
+
+/**
+ * 認証系エラーの文言とアイコン。
+ * 「未ログイン」(まだ始めていない)と「要再ログイン」(切れた)は対処が違うため分ける。
+ * 「認証情報エラー」はファイル自体の異常で、ログインし直しでは直らないこともある。
+ */
+function authPresentation(reason: AuthFailureReason): AuthPresentation {
+  switch (reason) {
+    case 'tokenRejected':
+      return { label: '要再ログイン', icon: '$(key)' };
+    case 'credentialsInvalid':
+    case 'credentialsUnreadable':
+      return { label: '認証情報エラー', icon: '$(alert)' };
+    case 'credentialsMissing':
+    case 'tokenMissing':
+      return { label: '未ログイン', icon: '' };
+  }
+}
+
+/** 失敗状態で直近の正常値と取得時刻を添える。値が無ければ何も出さない。 */
+function appendLastKnown(
+  tooltip: vscode.MarkdownString,
+  last: ProviderUsage | undefined,
+  lastFetchedAt: number | undefined,
+  mode: DisplayMode,
+  thresholds: AlertThresholds
+): void {
+  if (!last) {
+    return;
+  }
+  tooltip.appendMarkdown(`\n\n${limitsTable(last, mode, thresholds)}`);
+  if (lastFetchedAt) {
+    tooltip.appendMarkdown(`\n$(history) 最終正常取得 ${formatTime(lastFetchedAt)}`);
   }
 }
 
@@ -721,7 +790,7 @@ function lastGood(prev?: ProviderStatus): { usage?: ProviderUsage; at?: number }
   if (prev.kind === 'ok') {
     return { usage: prev.usage, at: prev.fetchedAt };
   }
-  if (prev.kind === 'error' || prev.kind === 'rateLimited') {
+  if (prev.kind === 'error' || prev.kind === 'rateLimited' || prev.kind === 'offline') {
     return { usage: prev.last, at: prev.lastFetchedAt };
   }
   return {};
