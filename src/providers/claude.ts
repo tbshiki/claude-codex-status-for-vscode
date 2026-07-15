@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import {
+  NetworkError,
   NotAuthenticatedError,
   ProviderUsage,
   RateLimitError,
@@ -60,11 +61,6 @@ export class ClaudeProvider implements UsageProvider {
    */
   async fetchRaw(): Promise<unknown> {
     const token = await this.readAccessToken();
-    if (!token) {
-      throw new NotAuthenticatedError(
-        'credentials.json からトークンを取得できませんでした。claude login を確認してください。'
-      );
-    }
     return this.request(token);
   }
 
@@ -77,20 +73,50 @@ export class ClaudeProvider implements UsageProvider {
     return path.join(os.homedir(), '.claude', '.credentials.json');
   }
 
-  private async readAccessToken(): Promise<string | undefined> {
+  /**
+   * 認証情報からアクセストークンを読む。読めない場合は原因を分類して投げる。
+   * ここで原因をまとめて握り潰すと、表示側が「未ログイン」しか案内できなくなる。
+   */
+  private async readAccessToken(): Promise<string> {
     const credPath = this.getCredentialsPath();
+
+    let rawText: string;
     try {
       // ポーリングごとに呼ばれるため、拡張ホストをブロックしない非同期読み込みにする。
-      const rawText = await fs.promises.readFile(credPath, 'utf8');
-      const json = JSON.parse(rawText);
-      return json?.claudeAiOauth?.accessToken;
-    } catch {
-      return undefined;
+      rawText = await fs.promises.readFile(credPath, 'utf8');
+    } catch (err) {
+      throw readFailureToError(err, credPath);
     }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(rawText);
+    } catch {
+      throw new NotAuthenticatedError(
+        'credentialsInvalid',
+        `認証情報ファイルの JSON を解析できませんでした (${credPath})`,
+        'ファイルが壊れている可能性があります。claude login をやり直すと再作成されます。'
+      );
+    }
+
+    const token = (json as { claudeAiOauth?: { accessToken?: unknown } } | null)
+      ?.claudeAiOauth?.accessToken;
+    if (typeof token !== 'string' || token.length === 0) {
+      throw new NotAuthenticatedError(
+        'tokenMissing',
+        `認証情報に OAuth トークン (claudeAiOauth.accessToken) がありません (${credPath})`,
+        'この拡張機能は OAuth ログイン専用のエンドポイントを使うため、ANTHROPIC_API_KEY など ' +
+          'APIキー運用では残量を取得できません。claude login で OAuth ログインしてください。'
+      );
+    }
+    return token;
   }
 
   private request(token: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
+      // タイムアウトや自前の中断は destroy 経由で 'error' に合流するため、
+      // 意図した中断理由をここに退避し、接続失敗と取り違えないようにする。
+      let aborted: Error | undefined;
       const req = https.request(
         {
           hostname: 'api.anthropic.com',
@@ -107,7 +133,10 @@ export class ClaudeProvider implements UsageProvider {
           res.on('data', (chunk) => {
             data += chunk;
             if (data.length > MAX_RESPONSE_BYTES) {
-              req.destroy(new Error('レスポンスサイズが上限を超えました'));
+              // destroy には理由を渡す。省略しても切断として 'error' には来るが、
+              // ECONNRESET(socket hang up)に化けて中断理由が失われる。
+              aborted = new Error('レスポンスサイズが上限を超えました');
+              req.destroy(aborted);
             }
           });
           res.on('end', () => {
@@ -118,6 +147,14 @@ export class ClaudeProvider implements UsageProvider {
               } catch {
                 reject(new Error('レスポンスのJSON解析に失敗しました'));
               }
+            } else if (status === 401 || status === 403) {
+              reject(
+                new NotAuthenticatedError(
+                  'tokenRejected',
+                  `アクセストークンが拒否されました (HTTP ${status})`,
+                  'トークンが失効している可能性があります。claude login で再認証してください。'
+                )
+              );
             } else if (status === 429) {
               reject(
                 new RateLimitError(
@@ -126,16 +163,68 @@ export class ClaudeProvider implements UsageProvider {
                 )
               );
             } else {
-              reject(new Error(`HTTP ${status}`));
+              reject(new Error(`使用状況を取得できませんでした (HTTP ${status})`));
             }
           });
         }
       );
-      req.on('timeout', () => req.destroy(new Error('timeout')));
-      req.on('error', reject);
+      req.on('timeout', () => {
+        aborted = new NetworkError('使用状況の取得がタイムアウトしました');
+        req.destroy(aborted);
+      });
+      // https.request の 'error' は接続レベルの失敗(DNS/接続拒否/TLS/切断)でのみ
+      // 発火する。HTTP ステータス起因のエラーはここへ来ないため、到達不能とみなせる。
+      req.on('error', (err) => {
+        reject(aborted ?? new NetworkError(`接続に失敗しました (${networkDetail(err)})`));
+      });
       req.end();
     });
   }
+}
+
+/** 認証情報ファイルの読み取り失敗を、権限・不在などの原因へ振り分ける。 */
+function readFailureToError(err: unknown, credPath: string): NotAuthenticatedError {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  if (code === 'ENOENT' || code === 'ENOTDIR') {
+    return new NotAuthenticatedError(
+      'credentialsMissing',
+      `認証情報ファイルが見つかりません (${credPath})`,
+      missingCredentialsHint()
+    );
+  }
+  return new NotAuthenticatedError(
+    'credentialsUnreadable',
+    `認証情報ファイルを読み取れませんでした (${code ?? errorText(err)})`,
+    'ファイルのアクセス権限を確認してください。'
+  );
+}
+
+/**
+ * ファイル不在時の案内。macOS の Claude Code は認証情報を Keychain に置き、
+ * このファイルを作らないことがあるため、その環境でだけ理由を補足する。
+ */
+function missingCredentialsHint(): string {
+  const base =
+    'Claude Code CLI で claude login を実行してください。' +
+    '保存先が異なる場合は設定 claudeCodexStatus.claude.credentialsPath でパスを指定できます。';
+  if (process.platform === 'darwin') {
+    return (
+      'macOS の Claude Code は認証情報を Keychain に保存するため、ログイン済みでも' +
+      'このファイルが作られないことがあります。その場合、現状この拡張機能では残量を取得できません。' +
+      base
+    );
+  }
+  return base;
+}
+
+/** 接続失敗の原因を短く表す。errno があればそれを、無ければメッセージを使う。 */
+function networkDetail(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code ?? errorText(err);
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
