@@ -601,10 +601,13 @@ export class StatusBarManager {
 /**
  * 認証系エラーの文言とアイコン。
  * 「未ログイン」(まだ始めていない)と「要再ログイン」(切れた)は対処が違うため分ける。
+ * 「トークン更新待ち」は期限切れだが、Claude Code 起動で自動更新され自然に復帰する。
  * 「認証情報エラー」はファイル自体の異常で、ログインし直しでは直らないこともある。
  */
 function authPresentation(reason: AuthFailureReason): AuthPresentation {
   switch (reason) {
+    case 'tokenExpired':
+      return { label: 'トークン更新待ち', icon: '$(key)' };
     case 'tokenRejected':
       return { label: '要再ログイン', icon: '$(key)' };
     case 'credentialsInvalid':
