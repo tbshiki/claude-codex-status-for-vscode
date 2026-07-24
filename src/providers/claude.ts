@@ -41,6 +41,13 @@ interface RawUsageResponse {
 const MAX_RESPONSE_BYTES = 1_000_000;
 
 /**
+ * 有効期限のこの時間だけ手前で「失効」と見なす余裕(ミリ秒)。
+ * 期限ちょうどの境界で送るとリクエスト中に切れて 401 になり得るため、
+ * 少し早めに「更新待ち」へ倒して無駄な送信を避ける。
+ */
+const TOKEN_EXPIRY_SKEW_MS = 30_000;
+
+/**
  * Claude Code の OAuth 認証情報を使い、レート制限枠の利用率を取得する。
  * エンドポイントとヘッダは非公式のため、失敗時は例外に委ねてフェイルソフトにする。
  */
@@ -99,14 +106,38 @@ export class ClaudeProvider implements UsageProvider {
       );
     }
 
-    const token = (json as { claudeAiOauth?: { accessToken?: unknown } } | null)
-      ?.claudeAiOauth?.accessToken;
+    const oauth = (
+      json as {
+        claudeAiOauth?: { accessToken?: unknown; expiresAt?: unknown };
+      } | null
+    )?.claudeAiOauth;
+    const token = oauth?.accessToken;
     if (typeof token !== 'string' || token.length === 0) {
       throw new NotAuthenticatedError(
         'tokenMissing',
         `認証情報に OAuth トークン (claudeAiOauth.accessToken) がありません (${credPath})`,
         'この拡張機能は OAuth ログイン専用のエンドポイントを使うため、ANTHROPIC_API_KEY など ' +
           'APIキー運用では残量を取得できません。claude login で OAuth ログインしてください。'
+      );
+    }
+
+    // アクセストークンは短命で、Claude Code が refreshToken を使って自動更新する。
+    // この拡張機能は自前で更新しないため、期限切れのトークンをそのまま送ると
+    // 401/403 になる。事前に expiresAt を見て、失効時は無駄な送信を避け、
+    // 「Claude Code 起動で自動復帰する」旨を案内する(フェイルソフト)。
+    // expiresAt が数値でない/欠落する場合はチェックせず、そのまま送って
+    // API 側の判定(tokenRejected)に委ねる。
+    const expiresAt = oauth?.expiresAt;
+    if (
+      typeof expiresAt === 'number' &&
+      Number.isFinite(expiresAt) &&
+      Date.now() + TOKEN_EXPIRY_SKEW_MS >= expiresAt
+    ) {
+      throw new NotAuthenticatedError(
+        'tokenExpired',
+        `アクセストークンの有効期限が切れています (期限 ${new Date(expiresAt).toLocaleString()})`,
+        'Claude Code CLI か公式拡張機能を起動するとトークンが自動更新され、次回の取得で自動的に復帰します。' +
+          'この拡張機能は OAuth トークンを自前で更新しないため、期限切れの間だけ残量を取得できません。'
       );
     }
     return token;
@@ -152,7 +183,8 @@ export class ClaudeProvider implements UsageProvider {
                 new NotAuthenticatedError(
                   'tokenRejected',
                   `アクセストークンが拒否されました (HTTP ${status})`,
-                  'トークンが失効している可能性があります。claude login で再認証してください。'
+                  'トークンが失効している可能性があります。Claude Code CLI か公式拡張機能を起動すると' +
+                    'トークンが自動更新され、次回の取得で復帰します。解消しない場合は claude login で再認証してください。'
                 )
               );
             } else if (status === 429) {

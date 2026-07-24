@@ -47,6 +47,12 @@ export type AuthFailureReason =
   | 'credentialsInvalid'
   /** JSON は読めたが目的のトークン項目が無い(APIキー運用など)。 */
   | 'tokenMissing'
+  /**
+   * トークンはあるが有効期限(expiresAt)が切れている。
+   * この拡張機能は自前でトークンを更新しないため、Claude Code CLI か公式拡張機能を
+   * 起動して自動更新されれば、次回の取得で復帰する(一時的・自動回復する認証状態)。
+   */
+  | 'tokenExpired'
   /** トークンはあるが API に拒否された(401/403 = 失効・剥奪)。 */
   | 'tokenRejected';
 
