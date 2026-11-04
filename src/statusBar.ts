@@ -486,6 +486,7 @@ export class StatusBarManager {
         'claudeCodexStatus.resumeAllMonitoring',
         'claudeCodexStatus.toggleDisplayMode',
         'claudeCodexStatus.toggleAlertColors',
+        'claudeCodexStatus.checkForUpdates',
       ],
     };
     tooltip.supportThemeIcons = true;
@@ -515,7 +516,8 @@ export class StatusBarManager {
         ? '\n\n$(play) クリックで全ての監視を再開　'
         : '\n\n$(refresh) クリックで今すぐ更新　') +
         `$(arrow-swap) [${nextModeLabel}表示に切替](command:claudeCodexStatus.toggleDisplayMode "パーセントの表示を残量⇔使用率で切り替え")　` +
-        `$(paintcan) [警告色を${colorsEnabled ? '無効化' : '有効化'}](command:claudeCodexStatus.toggleAlertColors "残量逼迫時のステータスバー文字色(黄/赤)の有効/無効")`
+        `$(paintcan) [警告色を${colorsEnabled ? '無効化' : '有効化'}](command:claudeCodexStatus.toggleAlertColors "残量逼迫時のステータスバー文字色(黄/赤)の有効/無効")　` +
+        `$(cloud-download) [更新を確認](command:claudeCodexStatus.checkForUpdates "GitHub Releases に新しいバージョンがあるか確認")`
     );
     return tooltip;
   }
