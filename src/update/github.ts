@@ -35,6 +35,8 @@ export interface LatestRelease {
   tagName: string;
   /** リリースのページ。API の値は使わず、検証済みのタグ名から組み立てる。 */
   pageUrl: string;
+  /** 公開された日時(epoch ミリ秒)。読めなければ undefined。 */
+  publishedAt?: number;
   /** インストールに使える .vsix。見つからない・検証できない場合は undefined。 */
   vsix?: ReleaseAsset;
 }
@@ -72,6 +74,22 @@ export function parseGitHubRepository(repository: unknown): GitHubRepository | u
 export function parseVersion(value: string): [number, number, number] | undefined {
   const match = /^v?(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/.exec(value.trim());
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
+}
+
+/**
+ * 公開から cooldownMs たつまでの残り時間(ミリ秒)。たっていれば 0。
+ * 公開日時が分からない、または未来(時計のずれ)のときは、待つ側に倒す(最大 cooldownMs)。
+ */
+export function remainingCooldownMs(
+  publishedAt: number | undefined,
+  now: number,
+  cooldownMs: number
+): number {
+  if (publishedAt === undefined) {
+    return cooldownMs;
+  }
+  const age = now - publishedAt;
+  return age >= cooldownMs ? 0 : Math.min(cooldownMs, cooldownMs - age);
 }
 
 /** a が b より新しければ正、同じなら 0、古ければ負。どちらかが解析できなければ undefined。 */
@@ -134,10 +152,13 @@ export function fetchLatestRelease(
       throw new Error('最新リリースのタグ名が想定外の形式です');
     }
     const version = parsed.join('.');
+    const publishedAt =
+      typeof raw.published_at === 'string' ? Date.parse(raw.published_at) : Number.NaN;
     return {
       version,
       tagName,
       pageUrl: `https://github.com/${owner}/${repo}/releases/tag/${encodeURIComponent(tagName)}`,
+      publishedAt: Number.isFinite(publishedAt) ? publishedAt : undefined,
       vsix: pickVsixAsset(raw.assets, repository, `${assetBaseName}-${version}.vsix`),
     };
   });
