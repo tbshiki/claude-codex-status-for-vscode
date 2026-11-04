@@ -5,6 +5,8 @@
 # 参照している場合にブロックする。
 # .env.example は除外する。process.env のようなプロパティ参照は誤検知しない
 # (直前が単語文字の ".env" はパスと見なさない)。
+# コマンドの文字列を正規表現で調べるだけの補助的な防止であり、文字列の分割や変数を使えば回避できる。
+# 権限の境界としては扱わない。ファイルを読むコマンドは .claude/settings.json で自動許可しないこと。
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -22,7 +24,11 @@ function Deny([string]$reason) {
 }
 
 try {
-    $payload = [Console]::In.ReadToEnd() | ConvertFrom-Json
+    # Claude Code は UTF-8 で送る。[Console]::In はコンソールのコードページで読み、日本語が化けるので、
+    # バイト列を UTF-8 として読む
+    $stdin = New-Object System.IO.MemoryStream
+    [Console]::OpenStandardInput().CopyTo($stdin)
+    $payload = [System.Text.Encoding]::UTF8.GetString($stdin.ToArray()).TrimStart([char]0xFEFF) | ConvertFrom-Json
     $command = [string]$payload.tool_input.command
     if ([string]::IsNullOrWhiteSpace($command)) { exit 0 }
 

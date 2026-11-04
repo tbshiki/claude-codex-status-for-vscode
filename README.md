@@ -69,9 +69,13 @@ Claude と Codex の両方を表示できます（マイルストーン M2）。
 
 このリポジトリでの AI エージェント（Codex / Claude Code）を使った開発体制（共通指示・スキル・セットアップ手順）は [`docs/ai-development.md`](docs/ai-development.md) を参照してください。
 
+## セキュリティ
+
+拡張機能が読み取る認証情報と、トークンを送る通信先の一覧は [`SECURITY.md`](SECURITY.md) にまとめています。脆弱性を見つけた場合は、公開の Issue ではなく [非公開の報告](https://github.com/tbshiki/claude-codex-status-for-vscode/security/advisories/new) から知らせてください。
+
 ## コントリビューション
 
-バグ報告・改善要望・修正は [Issue](https://github.com/tbshiki/claude-codex-status-for-vscode/issues) / Pull Request で歓迎します。
+バグ報告・改善要望・修正は [Issue](https://github.com/tbshiki/claude-codex-status-for-vscode/issues) / Pull Request で歓迎します（脆弱性は上の「セキュリティ」を参照）。
 
 ## ライセンス
 
