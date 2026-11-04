@@ -9,6 +9,16 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    ignore:
+      # engines.vscode より新しい型定義を入れると vsce package が失敗する。engines.vscode と一緒に手で上げる
+      - dependency-name: "@types/vscode"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # 拡張機能は VSCode に組み込みの Node.js で動く。CI の Node.js ではなく engines.vscode の版に合わせて手で上げる
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # TypeScript 7 は今の tsconfig のままだと Node.js の型が読み込まれず、ビルドに失敗する。上げるときは別の作業で行う
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
