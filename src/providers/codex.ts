@@ -279,7 +279,14 @@ async function connect(
   signal: AbortSignal
 ): Promise<Response> {
   try {
-    return await fetch('https://chatgpt.com/backend-api/wham/usage', { headers, signal });
+    // リダイレクトは追わない(Authorization ヘッダのトークンを別のホストへ送らない)。
+    // 3xx はそのまま返り、呼び出し側で HTTP エラー(取得失敗)として扱われる。
+    // Claude 側の https.request も、もともとリダイレクトを追わない。
+    return await fetch('https://chatgpt.com/backend-api/wham/usage', {
+      headers,
+      signal,
+      redirect: 'manual',
+    });
   } catch (err) {
     if (isAbort(err)) {
       throw new NetworkError('Codex の使用状況取得がタイムアウトしました');

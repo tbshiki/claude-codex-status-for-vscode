@@ -10,7 +10,17 @@ import {
   downloadVerifiedAsset,
   fetchLatestRelease,
   parseGitHubRepository,
+  remainingCooldownMs,
 } from './github';
+
+/**
+ * 公開からこの時間がたつまで、新しいリリースを案内しない。
+ * 作者のアカウントや端末が乗っ取られて悪意ある版が公開されても、作者が気付いて取り下げるまでに
+ * 広がらないようにする(2026年5月の Nx Console の件では、悪意ある版は公開から十数分で取り下げられたが、
+ * その間に自動更新で入った端末から GitHub の社内リポジトリが持ち出された)。
+ */
+const RELEASE_COOLDOWN_HOURS = 72;
+const RELEASE_COOLDOWN_MS = RELEASE_COOLDOWN_HOURS * 60 * 60 * 1000;
 
 /**
  * 起動直後の処理と重ならないよう、最初の確認を遅らせる。
@@ -182,6 +192,22 @@ export class UpdateChecker implements vscode.Disposable {
       return;
     }
 
+    const waitMs = remainingCooldownMs(latest.publishedAt, Date.now(), RELEASE_COOLDOWN_MS);
+    if (waitMs > 0) {
+      const waitHours = Math.ceil(waitMs / (60 * 60 * 1000));
+      const reason =
+        latest.publishedAt === undefined
+          ? '公開日時を確認できない'
+          : `公開から ${RELEASE_COOLDOWN_HOURS} 時間たっていない(あと約 ${waitHours} 時間)`;
+      this.appendLog(`v${latest.version} は${reason}ため、まだ案内しません`);
+      if (manual) {
+        void this.notifyCooldown(latest, waitHours).catch((err) =>
+          this.appendLog(`アップデートの案内で想定外のエラー: ${errorMessage(err)}`)
+        );
+      }
+      return;
+    }
+
     if (!manual && this.context.globalState.get<string>(SKIPPED_VERSION_KEY) === latest.version) {
       this.appendLog(`v${latest.version} はスキップ済みのため通知しません`);
       return;
@@ -191,6 +217,22 @@ export class UpdateChecker implements vscode.Disposable {
     void this.notify(latest).catch((err) =>
       this.appendLog(`アップデートの通知の処理で想定外のエラー: ${errorMessage(err)}`)
     );
+  }
+
+  /** 手動の確認で、公開から間もない版が見つかったときの案内。ここからは導入させない。 */
+  private async notifyCooldown(latest: LatestRelease, waitHours: number): Promise<void> {
+    const notes = 'リリースノート';
+    const detail =
+      latest.publishedAt === undefined
+        ? '公開日時を確認できないため、ここからのインストールは案内しません。'
+        : `安全のため、公開から ${RELEASE_COOLDOWN_HOURS} 時間たつまではここからのインストールを案内しません(あと約 ${waitHours} 時間)。`;
+    const choice = await vscode.window.showInformationMessage(
+      `Claude & Codex Status の新しいバージョン v${latest.version} が公開されています(現在 v${this.currentVersion})。${detail}`,
+      notes
+    );
+    if (choice === notes) {
+      await vscode.env.openExternal(vscode.Uri.parse(latest.pageUrl));
+    }
   }
 
   private async notify(latest: LatestRelease): Promise<void> {

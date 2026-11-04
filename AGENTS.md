@@ -37,6 +37,18 @@
 - tag の作成・プッシュは、通常のブランチプッシュとは別にユーザーへ確認する。
 - 秘密情報や生成物を誤ってコミットしないよう、コミット前に `git status --short` と対象ファイルを確認する。
 
+## リリース
+
+- リリースは `.github/workflows/release.yml` で作る。手元で作った `.vsix` をリリースに上げない（端末や `node_modules` が汚染されていても配布物に混ざらないようにするため）。
+- 手順:
+  1. `package.json` の版を上げた変更を `main` へ取り込む。
+  2. ユーザーの確認を得てから、`main` のマージコミットに軽量タグ `vX.Y.Z` を付けて push する。
+  3. workflow が `.vsix` をビルドし、ビルドの証明（build provenance）を付けて下書きのリリースに添付する。タグのコミットが `main` の履歴にない場合と、タグと `package.json` の版が違う場合は失敗する。
+  4. リリースノート（日本語、前の版からの変更点とインストール方法）を書き、`gh release edit vX.Y.Z --notes-file <file> --draft=false` で公開する。
+  5. `gh attestation verify` で添付の `.vsix` の証明を確かめる。
+- immutable releases を有効にしているため、公開後は添付ファイルとタグを変えられない。誤りは次の版で直す。
+- 拡張機能は、公開から 72 時間たつまで新しい版を利用者に案内しない（乗っ取りへの備え）。急ぎの修正でも、この待ち時間は変えない。
+
 ## GitHub の設定
 
 - このリポジトリは公開している。実在のパス、user 名、メールアドレスをファイルやコミットメッセージに書かない。
@@ -51,9 +63,11 @@
 - Dependabot はアラートと security updates を有効にし、`.github/dependabot.yml` で npm と github-actions を毎週更新する（cooldown 7 日）。
 - Actions は GitHub 製の action だけを許可し、SHA での固定を必須にする。`GITHUB_TOKEN` の既定の権限は read にする。fork から来た Pull Request は、外部のコントリビューターすべてについて承認してから動かす。
 - Wiki と Projects は使わない（無効にする）。
+- リリースは immutable releases（公開後のリリースの添付ファイルとタグを変更できなくする）を有効にする。
 - workflow の書き方:
   - action は `uses: owner/repo@<コミットの SHA> # vX.Y.Z` の形で書き、tag だけで指定しない。SHA は `gh api` で調べ、tag が注釈付きなら指しているコミットまでたどる。
   - `permissions:` を明記して最小にする（通常は `contents: read`）。`actions/checkout` には `persist-credentials: false` を付け、ジョブに `timeout-minutes` を付ける。
+  - 書き込みの権限や `id-token: write` を持つジョブでは、依存パッケージ（npm）のコードを動かさない。ビルドは読み取りだけのジョブで行い、成果物を受け渡す（`release.yml` の build と release の分け方）。リリースのビルドではキャッシュと install script を使わない。
   - step の `shell:` に `${{ matrix.* }}` を書かない。workflow 全体が無効になり、ジョブが 1 つも動かない。
   - push 後は `gh run list` で、workflow が実際に動いたかを確かめる。
 
