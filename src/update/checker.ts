@@ -12,13 +12,20 @@ import {
   parseGitHubRepository,
 } from './github';
 
-/** 起動直後の処理と重ならないよう、最初の確認を遅らせる。 */
+/**
+ * 起動直後の処理と重ならないよう、最初の確認を遅らせる。
+ * 複数ウィンドウが同時に起動したときに確認の時刻がそろわないよう、ばらつきを加える。
+ */
 const FIRST_CHECK_DELAY_MS = 15_000;
-/** 「前回から24時間たったか」を見に行く間隔。API を叩くのは24時間に1回だけ。 */
+const FIRST_CHECK_JITTER_MS = 60_000;
+/** 「前回から24時間たったか」を見に行く間隔。API を叩くのは原則24時間に1回だけ。 */
 const TICK_INTERVAL_MS = 60 * 60 * 1000;
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-/** globalState はウィンドウ間で共有されるため、複数ウィンドウでも確認は24時間に1回に収まる。 */
+/**
+ * globalState はウィンドウ間で共有されるため、複数ウィンドウでも確認は原則24時間に1回に収まる
+ * (他のウィンドウへの反映は非同期なので、同時に確認が走ることはありうる)。
+ */
 const LAST_CHECKED_KEY = 'updateCheck.lastCheckedAt';
 const SKIPPED_VERSION_KEY = 'updateCheck.skippedVersion';
 
@@ -36,7 +43,13 @@ export class UpdateChecker implements vscode.Disposable {
   private firstTimer: NodeJS.Timeout | undefined;
   private tickTimer: NodeJS.Timeout | undefined;
   private checking: Promise<void> | undefined;
+  private manualCheck: Promise<void> | undefined;
   private installing = false;
+  /**
+   * このウィンドウで導入した版。再読み込みするまでは古い版が動き続けるため、
+   * 同じ版を再び通知・再導入しないよう覚えておく(再読み込みで消える)。
+   */
+  private installedVersion: string | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -53,15 +66,24 @@ export class UpdateChecker implements vscode.Disposable {
     if (!this.repository) {
       return;
     }
-    this.firstTimer = setTimeout(() => this.runScheduled(), FIRST_CHECK_DELAY_MS);
+    const delay = FIRST_CHECK_DELAY_MS + Math.floor(Math.random() * FIRST_CHECK_JITTER_MS);
+    this.firstTimer = setTimeout(() => this.runScheduled(), delay);
     this.tickTimer = setInterval(() => this.runScheduled(), TICK_INTERVAL_MS);
   }
 
   /** コマンド「アップデートを確認」。設定・間隔・スキップに関係なく確認し、結果を必ず知らせる。 */
-  async checkNow(): Promise<void> {
-    // 自動の確認の途中なら終わるのを待つ(自動の確認は「最新です」を知らせないため、相乗りしない)。
-    await this.checking;
-    return this.runExclusive(() => this.check(true));
+  checkNow(): Promise<void> {
+    // 手動の確認が続けて呼ばれたら、実行中のものに相乗りする(API を二重に叩かない)。
+    if (!this.manualCheck) {
+      this.manualCheck = (async () => {
+        // 自動の確認の途中なら終わるのを待つ(自動の確認は「最新です」を知らせないため、相乗りしない)。
+        await this.checking;
+        await this.runExclusive(() => this.check(true));
+      })().finally(() => {
+        this.manualCheck = undefined;
+      });
+    }
+    return this.manualCheck;
   }
 
   dispose(): void {
@@ -81,7 +103,9 @@ export class UpdateChecker implements vscode.Disposable {
       return;
     }
     const last = this.context.globalState.get<number>(LAST_CHECKED_KEY, 0);
-    if (Date.now() - last < CHECK_INTERVAL_MS) {
+    const elapsed = Date.now() - last;
+    // 負なら時計が戻った(前回が未来の時刻)。その場合は待たずに確認する。
+    if (elapsed >= 0 && elapsed < CHECK_INTERVAL_MS) {
       return;
     }
     void this.runExclusive(() => this.check(false));
@@ -125,13 +149,34 @@ export class UpdateChecker implements vscode.Disposable {
     }
 
     const diff = compareVersions(latest.version, this.currentVersion);
-    if (diff === undefined || diff <= 0) {
+    if (diff === undefined) {
+      // 手元のビルドなど、版が X.Y.Z の形でないと比べられない。
+      this.appendLog(`版を比較できません(現在 v${this.currentVersion}、最新リリース v${latest.version})`);
+      if (manual) {
+        void vscode.window.showWarningMessage(
+          `現在の版 v${this.currentVersion} と公開中の最新 v${latest.version} を比較できませんでした。`
+        );
+      }
+      return;
+    }
+    if (diff <= 0) {
       this.appendLog(`最新リリースは v${latest.version}(現在 v${this.currentVersion})`);
       if (manual) {
         void vscode.window.showInformationMessage(
-          diff === undefined || diff === 0
+          diff === 0
             ? `Claude & Codex Status は最新です(v${this.currentVersion})。`
             : `Claude & Codex Status は最新です(現在 v${this.currentVersion}、公開中の最新は v${latest.version})。`
+        );
+      }
+      return;
+    }
+
+    const installed = this.installedVersion;
+    if (installed && (compareVersions(latest.version, installed) ?? 1) <= 0) {
+      this.appendLog(`v${installed} はインストール済みで、再読み込みを待っています`);
+      if (manual) {
+        void this.promptReload(installed).catch((err) =>
+          this.appendLog(`再読み込みの案内で想定外のエラー: ${errorMessage(err)}`)
         );
       }
       return;
@@ -142,7 +187,10 @@ export class UpdateChecker implements vscode.Disposable {
       return;
     }
     // 通知を待つ間も次の確認を止めないよう、応答は待たない。
-    void this.notify(latest);
+    // 通知の先(導入・ブラウザを開く等)の失敗は、ここで受け止めて記録だけにする。
+    void this.notify(latest).catch((err) =>
+      this.appendLog(`アップデートの通知の処理で想定外のエラー: ${errorMessage(err)}`)
+    );
   }
 
   private async notify(latest: LatestRelease): Promise<void> {
@@ -216,10 +264,15 @@ export class UpdateChecker implements vscode.Disposable {
       return;
     }
 
+    this.installedVersion = latest.version;
     this.appendLog(`v${latest.version} をインストールしました`);
+    await this.promptReload(latest.version);
+  }
+
+  private async promptReload(version: string): Promise<void> {
     const reload = '再読み込み';
     const choice = await vscode.window.showInformationMessage(
-      `Claude & Codex Status v${latest.version} をインストールしました。ウィンドウを再読み込みすると有効になります。`,
+      `Claude & Codex Status v${version} をインストールしました。ウィンドウを再読み込みすると有効になります。`,
       reload
     );
     if (choice === reload) {

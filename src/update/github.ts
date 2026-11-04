@@ -91,7 +91,7 @@ export function compareVersions(a: string, b: string): number | undefined {
 
 /**
  * 最新のリリース(下書きとプレリリースを除く)を取得する。
- * @param assetBaseName .vsix の名前の先頭(package.json の name)。`<name>-<version>.vsix` を優先して選ぶ。
+ * @param assetBaseName .vsix の名前の先頭(package.json の name)。`<name>-<version>.vsix` だけを使う。
  */
 export function fetchLatestRelease(
   repository: GitHubRepository,
@@ -179,42 +179,55 @@ export function downloadVerifiedAsset(
 }
 
 /**
- * assets から .vsix を 1 つ選ぶ。`preferredName` と同名のものを優先し、
- * 無ければ .vsix がちょうど 1 つのときだけそれを使う。
+ * assets から `<name>-<version>.vsix` と名前が完全に一致するものを選ぶ
+ * (別の拡張機能の .vsix を誤って添付しても、それを導入しないため)。
  * ダウンロード先が同じリポジトリのリリースでないもの、SHA-256 が無いものは使わない。
  */
 function pickVsixAsset(
   assets: unknown,
   repository: GitHubRepository,
-  preferredName: string
+  expectedName: string
 ): ReleaseAsset | undefined {
   if (!Array.isArray(assets)) {
     return undefined;
   }
-  const downloadPrefix = `https://github.com/${repository.owner}/${repository.repo}/releases/download/`;
-  const candidates: ReleaseAsset[] = [];
   for (const item of assets) {
-    if (!isRecord(item) || item.state !== 'uploaded') {
+    if (!isRecord(item) || item.state !== 'uploaded' || item.name !== expectedName) {
       continue;
     }
-    const { name, browser_download_url: downloadUrl, size, digest } = item;
-    if (typeof name !== 'string' || !name.endsWith('.vsix')) {
-      continue;
-    }
-    if (typeof downloadUrl !== 'string' || !downloadUrl.startsWith(downloadPrefix)) {
-      continue;
-    }
+    const downloadUrl = normalizeDownloadUrl(item.browser_download_url, repository);
     const sha256 =
-      typeof digest === 'string' ? /^sha256:([0-9a-f]{64})$/i.exec(digest)?.[1] : undefined;
-    if (!sha256 || typeof size !== 'number' || !Number.isFinite(size) || size <= 0) {
-      continue;
+      typeof item.digest === 'string'
+        ? /^sha256:([0-9a-f]{64})$/i.exec(item.digest)?.[1]
+        : undefined;
+    const size = item.size;
+    if (!downloadUrl || !sha256 || typeof size !== 'number' || !Number.isFinite(size) || size <= 0) {
+      return undefined;
     }
-    candidates.push({ name, downloadUrl, size, sha256: sha256.toLowerCase() });
+    return { name: expectedName, downloadUrl, size, sha256: sha256.toLowerCase() };
   }
-  return (
-    candidates.find((asset) => asset.name === preferredName) ??
-    (candidates.length === 1 ? candidates[0] : undefined)
-  );
+  return undefined;
+}
+
+/**
+ * ダウンロード先が https://github.com/<owner>/<repo>/releases/download/ の下にあることを、
+ * URL として正規化(`..` や `%2e%2e` の解決を含む)したうえで確かめる。
+ */
+function normalizeDownloadUrl(value: unknown, repository: GitHubRepository): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  const prefix = `/${repository.owner}/${repository.repo}/releases/download/`;
+  if (url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix)) {
+    return undefined;
+  }
+  return url.href;
 }
 
 /**
