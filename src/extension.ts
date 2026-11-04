@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { StatusBarManager } from './statusBar';
 import { ClaudeProvider } from './providers/claude';
 import { CodexProvider } from './providers/codex';
+import { UpdateChecker } from './update/checker';
 
 let manager: StatusBarManager | undefined;
 
@@ -14,10 +15,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const status = manager;
 
   const diagnostics = vscode.window.createOutputChannel('Claude & Codex Status');
+  const updates = new UpdateChecker(context, diagnostics);
   let configRestartTimer: NodeJS.Timeout | undefined;
 
   context.subscriptions.push(
     diagnostics,
+    updates,
+    vscode.commands.registerCommand('claudeCodexStatus.checkForUpdates', () =>
+      updates.checkNow()
+    ),
     vscode.commands.registerCommand('claudeCodexStatus.refresh', () =>
       status.refresh(undefined, { manual: true })
     ),
@@ -80,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   status.start();
+  updates.start();
 }
 
 export function deactivate(): void {

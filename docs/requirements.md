@@ -27,6 +27,7 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 - ホバー時の詳細ツールチップ(内訳・リセットまでの残り時間)
 - クリックでの即時再取得
 - ホバー詳細内のリンクによる Claude / Codex 個別監視の停止・再開
+- GitHub Releases に公開した新しいバージョンの通知と、利用者が選んだときの導入
 - Windows / macOS / Linux での動作
 
 ### 2.2 対象外とするもの(Out of Scope, v1時点)
@@ -86,6 +87,7 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 | `claudeCodexStatus.refreshClaude` | Claude & Codex: Claudeのみ更新 | Claudeのみ再取得 |
 | `claudeCodexStatus.refreshCodex` | Claude & Codex: Codexのみ更新 | Codexのみ再取得 |
 | `claudeCodexStatus.resumeAllMonitoring` | (パレット非表示) | 全プロバイダの監視を再開。全停止時の最小表示のクリック先 |
+| `claudeCodexStatus.checkForUpdates` | Claude & Codex: 更新を確認 | GitHub Releases の最新版をすぐ確認する(4.6)。最新のときも結果を知らせる |
 
 ### 4.4 設定項目(案)
 
@@ -100,7 +102,8 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
   "claudeCodexStatus.displayMode": "remaining", // "remaining"(残量) | "used"(使用率)。ホバー内リンクでも切替可
   "claudeCodexStatus.warningRemainingPercent": 30, // 残量がこの%未満で該当プロバイダを黄文字+⚠。0で無効
   "claudeCodexStatus.criticalRemainingPercent": 10, // 残量がこの%未満で該当プロバイダを赤文字+エラーアイコン。0で無効
-  "claudeCodexStatus.statusBarAlertColors": true // 逼迫時のステータスバー文字色(黄/赤)。ホバー内リンクでも切替可
+  "claudeCodexStatus.statusBarAlertColors": true, // 逼迫時のステータスバー文字色(黄/赤)。ホバー内リンクでも切替可
+  "claudeCodexStatus.updateCheck.enabled": true // GitHub Releases の新しいバージョンを自動で確認して通知する(4.6)。application スコープ
 }
 ```
 
@@ -122,6 +125,24 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 - 一時的な失敗(到達不能・429・その他)は直近の正常値を保持し、末尾にアイコンのみ添える。認証系は利用者の操作が必要なため、古い値を出して「取れている」と誤解させない
 - 到達不能(ネットワーク層)とAPI起因のエラー(HTTP応答あり)を混同しない。前者のみ `NetworkError` とする
 - 両プロバイダとも独立して動作し、片方が失敗してももう片方の表示に影響しない
+
+### 4.6 更新の通知
+
+Marketplace に公開していないため、VSCode の自動更新は効かない。GitHub Releases に公開した版を拡張機能が自分で確認し、利用者に知らせる。
+
+- 確認先: `https://api.github.com/repos/<owner>/<repo>/releases/latest`(下書きとプレリリースは対象外)。リポジトリは `package.json` の `repository` から求め、GitHub の https の URL でなければ確認しない
+- 送る情報: `User-Agent`(`claude-codex-status/<版>`)だけ。トークンや認証情報は送らない
+- 頻度: 起動の15秒後と、その後1時間ごとに「前回の確認から24時間たったか」を見て、たっていれば確認する。前回の確認時刻は `globalState`(ウィンドウ間で共有)に置き、複数ウィンドウでも確認は24時間に1回に収める。失敗しても次の確認は24時間後
+- 比較: タグ名 `vX.Y.Z` / `X.Y.Z` と `package.json` の `version` を数値で比べる。この形式でないタグ(プレリリース等)は無視する
+- 通知: 新しい版があれば「インストール」「リリースノート」「このバージョンをスキップ」を出す。スキップした版は自動の確認では再び通知しない(コマンドでの確認では通知する)。リリースの本文は表示しない
+- 導入(「インストール」を押したときだけ):
+  - `<name>-<version>.vsix`(無ければ唯一の `.vsix`)を `https://github.com/<owner>/<repo>/releases/download/` から取得する
+  - API が返す `digest`(SHA-256)と一致した場合だけ、`globalStorageUri` に保存して `workbench.extensions.installExtension` で導入し、再読み込みを案内する。導入後は `.vsix` を消す
+  - SHA-256 が無い `.vsix` は導入に使わない(通知は「リリースノート」と「スキップ」だけになる)
+  - 失敗したら原因とリリースページへのリンクを出す
+- 設定 `claudeCodexStatus.updateCheck.enabled` を `false` にすると自動の確認をやめる。コマンド「更新を確認」は設定に関係なく使える
+- 自動の確認の失敗(到達不能・レート制限など)は通知せず、出力パネルに記録するだけにする。残量の表示には影響させない
+- リリースの運用: タグは `vX.Y.Z`、`npm run package` で作った `claude-codex-status-<version>.vsix` を添付し、下書き・プレリリースにしない
 
 ## 5. 非機能要件
 
