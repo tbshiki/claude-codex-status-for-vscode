@@ -37,6 +37,24 @@
 - tag の作成・プッシュは、通常のブランチプッシュとは別にユーザーへ確認する。
 - 秘密情報や生成物を誤ってコミットしないよう、コミット前に `git status --short` と対象ファイルを確認する。
 
+## GitHub の設定
+
+- このリポジトリは公開している。実在のパス、user 名、メールアドレスをファイルやコミットメッセージに書かない。
+- GitHub の設定を変えるときは、変える内容を先にユーザーへ示し、承認を得てから行う。
+- `main` は ruleset で守る。削除と force push を禁止し、Pull Request と CI の `build` の成功を必須にする（承認は 0 件、マージ方法はマージコミットだけ）。リポジトリの admin は bypass できるので、ローカルで `--no-ff` マージして push する運用はそのまま使える。
+- `.github/workflows/build.yml` のジョブ名 `build` は ruleset の必須チェックになっている。変えるときは ruleset も直す。
+- マージ方法はマージコミットだけにし、マージ後のブランチは自動で削除する。
+- 脆弱性は非公開の報告（private vulnerability reporting）で受け付ける。窓口と、拡張機能が扱う認証情報・通信先は `SECURITY.md` に書く。
+- CodeQL は default setup で動かす。secret scanning と push protection を有効にする。
+- Dependabot はアラートと security updates を有効にし、`.github/dependabot.yml` で npm と github-actions を毎週更新する（cooldown 7 日）。
+- Actions は GitHub 製の action だけを許可し、SHA での固定を必須にする。`GITHUB_TOKEN` の既定の権限は read にする。fork から来た Pull Request は、外部のコントリビューターすべてについて承認してから動かす。
+- Wiki と Projects は使わない（無効にする）。
+- workflow の書き方:
+  - action は `uses: owner/repo@<コミットの SHA> # vX.Y.Z` の形で書き、tag だけで指定しない。SHA は `gh api` で調べ、tag が注釈付きなら指しているコミットまでたどる。
+  - `permissions:` を明記して最小にする（通常は `contents: read`）。`actions/checkout` には `persist-credentials: false` を付け、ジョブに `timeout-minutes` を付ける。
+  - step の `shell:` に `${{ matrix.* }}` を書かない。workflow 全体が無効になり、ジョブが 1 つも動かない。
+  - push 後は `gh run list` で、workflow が実際に動いたかを確かめる。
+
 ## 実装と検証
 
 - 複数ファイルや大きな変更では `skills/dev-workflow/SKILL.md` を利用する。
