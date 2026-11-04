@@ -6,6 +6,8 @@
 - 再利用可能なスキルはルートの [`skills/`](../skills/) が正典です（`ai-config` / `dev-workflow` / `qa`）。
 - Codex の `.agents/skills` と Claude Code の `.claude/skills` は `skills/` への相対 symlink としてローカルで生成します。symlink 自体は Git 管理せず、内容のコピーも作りません。
 - Claude Code の許可設定は読み取り中心です。commit / tag / push、破壊的操作、外部公開は自動許可しません。認証情報（`.credentials.json`、`.codex/auth.json`）や `.env`、鍵は読み取りを拒否します。
+- ファイルの中身を表示できるシェルのコマンド（`Get-Content`、`Select-String`、`rg` の検索）は自動許可しません。シェルのコマンドに秘密情報のファイル名が含まれるかを調べる hook は、正規表現による補助的な防止で、権限の境界ではありません。
+- Git 管理下のファイルの編集は hook で自動許可しますが、`.claude/` と `.github/` の下は AI の権限と CI を決めるファイルなので、追跡済みでも毎回確認します。
 
 ## クローン直後のセットアップ
 
