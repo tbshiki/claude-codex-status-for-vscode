@@ -41,7 +41,9 @@
 
 - このリポジトリは公開している。実在のパス、user 名、メールアドレスをファイルやコミットメッセージに書かない。
 - GitHub の設定を変えるときは、変える内容を先にユーザーへ示し、承認を得てから行う。
-- `main` は ruleset で守る。削除と force push を禁止し、Pull Request と CI の `build` の成功を必須にする（承認は 0 件、マージ方法はマージコミットだけ）。リポジトリの admin は bypass できるので、ローカルで `--no-ff` マージして push する運用はそのまま使える。
+- `main` は 2 つの ruleset で守る。
+  - 削除と force push を禁止する。bypass は認めない（admin も例外にしない）。
+  - Pull Request と CI の `build` の成功を必須にする（承認は 0 件、マージ方法はマージコミットだけ）。こちらはリポジトリの admin だけが bypass できるので、ローカルで `--no-ff` マージして push する運用はそのまま使える。
 - `.github/workflows/build.yml` のジョブ名 `build` は ruleset の必須チェックになっている。変えるときは ruleset も直す。
 - マージ方法はマージコミットだけにし、マージ後のブランチは自動で削除する。
 - 脆弱性は非公開の報告（private vulnerability reporting）で受け付ける。窓口と、拡張機能が扱う認証情報・通信先は `SECURITY.md` に書く。

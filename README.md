@@ -18,6 +18,8 @@ Claude Code と OpenAI Codex CLI のレートリミット残量（5時間枠・�
 
 ## 開発
 
+Node.js 22 以上が必要です（パッケージングに使う `@vscode/vsce` 4 の要件。CI は Node.js 24 でビルドしています）。
+
 ```powershell
 npm install       # 依存関係の取得(初回のみ)
 npm run compile   # tsc で out/ へビルド
