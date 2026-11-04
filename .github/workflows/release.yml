@@ -1,0 +1,86 @@
+name: release
+
+# 版のタグ(例: v0.2.16)を push すると、.vsix をビルドしてビルドの証明(build provenance)を付け、
+# 下書きのリリースに添付する。リリースノートを書いて公開(下書きの解除)するのは人の手で行う。
+# 手元の端末で作った .vsix を上げないことで、端末や node_modules が汚染されていても配布物に混ざらないようにする。
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+jobs:
+  # 依存パッケージ(npm)のコードを動かすジョブ。書き込みの権限も OIDC トークンも渡さない。
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # action はコミットの SHA で固定し、版をコメントに書く(Dependabot が両方を更新する)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # main の履歴と照らし合わせるため、全ての履歴を取る
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          # リリースのビルドにはキャッシュを使わない(汚染されたキャッシュを持ち込まない)
+          package-manager-cache: false
+      - name: タグが main の履歴にあるか確かめる
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::タグ ${GITHUB_REF_NAME} のコミットが main の履歴にありません"
+            exit 1
+          fi
+      - name: タグと package.json の版が一致するか確かめる
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::タグ ${GITHUB_REF_NAME} と package.json の版 ${version} が一致しません"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      # 依存パッケージの install script は動かさない(パッケージングには不要)
+      - run: npm ci --ignore-scripts
+      - run: npm run package
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vsix
+          path: dist/claude-codex-status-${{ steps.version.outputs.version }}.vsix
+          if-no-files-found: error
+          retention-days: 1
+
+  # 外部のコードを動かさずに、証明を付けて下書きのリリースを作るジョブ。
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # 下書きのリリースの作成
+      id-token: write # 証明の署名(Sigstore)に使う OIDC トークン
+      attestations: write # 証明の保存
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vsix
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: claude-codex-status-${{ needs.build.outputs.version }}.vsix
+      - name: 下書きのリリースを作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "claude-codex-status-${VERSION}.vsix" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --notes "下書き: リリースノートを書いてから公開してください。"
