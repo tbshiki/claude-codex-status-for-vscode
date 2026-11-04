@@ -14,7 +14,17 @@ Claude Code と OpenAI Codex CLI のレートリミット残量（5時間枠・�
 - Claude 側は OAuth 専用のエンドポイントを使うため、`ANTHROPIC_API_KEY` などの APIキー運用では残量を取得できません。
 - macOS の Claude Code は認証情報を Keychain に保存するため `.credentials.json` が存在せず、Claude 側が「未ログイン」と表示される可能性が高いです。ファイルが別の場所にある場合は、設定 `claudeCodexStatus.claude.credentialsPath` / `claudeCodexStatus.codex.authPath` でパスを明示指定できます。
 - 表示される残量は一定間隔（既定300秒、設定 `claudeCodexStatus.pollIntervalSeconds` で変更可）で取得した時点の値のため、実際の使用量と時間差がある場合があります。ステータスバーのクリックや「今すぐ更新」コマンドで手動更新できます。
-- Marketplace には公開していません。`npm run package` で `dist/` に生成される `.vsix` を手動でインストールしてください。
+- Marketplace には公開していません。[GitHub Releases](https://github.com/tbshiki/claude-codex-status-for-vscode/releases/latest) に添付した `.vsix` を、VSCode の「VSIX からのインストール…」で導入してください（自分でビルドする場合は `npm run package` で `dist/` に生成されます）。
+
+## アップデートの通知
+
+v0.2.15 から、GitHub Releases に新しいバージョンが公開されると、何も操作しなくても通知が出ます（それより前の版を使っている場合は、一度だけ手動で入れ直してください）。Marketplace の拡張機能ではないため、拡張機能ビューの「更新」ボタンには出ません。
+
+- 起動後と 24 時間ごとに最新のリリースを確認します。複数のウィンドウを開いていても、確認は原則 24 時間に 1 回です（同時に起動したウィンドウでは重なることがあります）。
+- 通知の「インストール」を押すと、`.vsix` をダウンロードし、GitHub が示す SHA-256 と一致した場合だけ導入します。導入後に「再読み込み」で有効になります。
+- 「このバージョンをスキップ」を選んだ版は、次の版が出るまで通知しません。
+- 手動で確認したいときは、拡張機能ビューでこの拡張機能を右クリック（または歯車）して「アップデートを確認」を選びます。コマンドパレット（`Ctrl+Shift+P`）の「Claude & Codex: アップデートを確認」でも同じです。
+- 自動の確認が不要なら、設定 `claudeCodexStatus.updateCheck.enabled` を `false` にしてください。通信先と送る情報は [`SECURITY.md`](SECURITY.md) にあります。
 
 ## 開発
 
@@ -39,6 +49,9 @@ src/
     types.ts            # プロバイダ共通の型と例外
     claude.ts           # Claude の残量取得(実装済み)
     codex.ts            # Codex のローカル認証情報から残量を取得
+  update/
+    checker.ts          # アップデートの確認の間隔、通知、導入(VSCode API)
+    github.ts           # GitHub Releases の最新版の取得と .vsix の検証
 docs/requirements.md    # 要件定義書
 ```
 

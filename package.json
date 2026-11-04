@@ -2,7 +2,7 @@
   "name": "claude-codex-status",
   "displayName": "Claude & Codex Status",
   "description": "Claude Code と OpenAI Codex CLI のレート残量(5時間枠/週枠)をVSCodeのステータスバーに常時表示します",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -62,8 +62,22 @@
       {
         "command": "claudeCodexStatus.showRawUsage",
         "title": "Claude & Codex: 生の使用状況を表示(診断)"
+      },
+      {
+        "command": "claudeCodexStatus.checkForUpdates",
+        "category": "Claude & Codex",
+        "title": "アップデートを確認"
       }
     ],
+    "menus": {
+      "extension/context": [
+        {
+          "command": "claudeCodexStatus.checkForUpdates",
+          "group": "2_configure",
+          "when": "extension == 'local.claude-codex-status' && extensionStatus == installed"
+        }
+      ]
+    },
     "configuration": {
       "title": "Claude & Codex Status",
       "properties": {
@@ -135,6 +149,12 @@
           "type": "boolean",
           "default": true,
           "description": "残量逼迫時にステータスバーのテキスト色を黄/赤に変更します。ホバー内のリンクからも切り替えできます(アイコンとホバー内の色には影響しません)。"
+        },
+        "claudeCodexStatus.updateCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "起動後と24時間ごとに GitHub Releases で新しいバージョンを確認し、あれば通知します(通知の「インストール」を押したときだけ .vsix をダウンロードして導入します)。トークンなどの情報は送りません。手動の「アップデートを確認」(拡張機能ビューのこの拡張機能の右クリックメニュー、またはコマンドパレット)はこの設定に関係なく使えます。"
         }
       }
     }
