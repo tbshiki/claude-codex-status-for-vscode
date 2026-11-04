@@ -49,7 +49,7 @@ export class GitHubRateLimitError extends Error {
 
 /**
  * package.json の repository(文字列、または { url })から GitHub のリポジトリを取り出す。
- * GitHub の https の URL でなければ undefined(更新の確認をしない)。
+ * GitHub の https の URL でなければ undefined(アップデートの確認をしない)。
  */
 export function parseGitHubRepository(repository: unknown): GitHubRepository | undefined {
   const url =

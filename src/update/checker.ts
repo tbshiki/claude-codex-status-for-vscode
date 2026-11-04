@@ -1,3 +1,6 @@
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import {
   GitHubRateLimitError,
@@ -54,7 +57,7 @@ export class UpdateChecker implements vscode.Disposable {
     this.tickTimer = setInterval(() => this.runScheduled(), TICK_INTERVAL_MS);
   }
 
-  /** コマンド「更新を確認」。設定・間隔・スキップに関係なく確認し、結果を必ず知らせる。 */
+  /** コマンド「アップデートを確認」。設定・間隔・スキップに関係なく確認し、結果を必ず知らせる。 */
   async checkNow(): Promise<void> {
     // 自動の確認の途中なら終わるのを待つ(自動の確認は「最新です」を知らせないため、相乗りしない)。
     await this.checking;
@@ -87,7 +90,7 @@ export class UpdateChecker implements vscode.Disposable {
   private runExclusive(task: () => Promise<void>): Promise<void> {
     if (!this.checking) {
       this.checking = task()
-        .catch((err) => this.appendLog(`更新の確認で想定外のエラー: ${errorMessage(err)}`))
+        .catch((err) => this.appendLog(`アップデートの確認で想定外のエラー: ${errorMessage(err)}`))
         .finally(() => {
           this.checking = undefined;
         });
@@ -99,7 +102,7 @@ export class UpdateChecker implements vscode.Disposable {
     if (!this.repository) {
       if (manual) {
         void vscode.window.showWarningMessage(
-          'package.json の repository が GitHub ではないため、更新を確認できません。'
+          'package.json の repository が GitHub ではないため、アップデートを確認できません。'
         );
       }
       return;
@@ -112,10 +115,10 @@ export class UpdateChecker implements vscode.Disposable {
       latest = await fetchLatestRelease(this.repository, this.assetBaseName, this.userAgent);
     } catch (err) {
       const message = errorMessage(err);
-      this.appendLog(`更新の確認に失敗しました: ${message}`);
+      this.appendLog(`アップデートの確認に失敗しました: ${message}`);
       if (manual) {
         void vscode.window.showWarningMessage(
-          err instanceof GitHubRateLimitError ? message : `更新の確認に失敗しました: ${message}`
+          err instanceof GitHubRateLimitError ? message : `アップデートの確認に失敗しました: ${message}`
         );
       }
       return;
@@ -166,8 +169,8 @@ export class UpdateChecker implements vscode.Disposable {
       return;
     }
     this.installing = true;
-    const dir = vscode.Uri.joinPath(this.context.globalStorageUri, 'updates');
-    const file = vscode.Uri.joinPath(dir, asset.name);
+    let dir: string | undefined;
+    let failure: string | undefined;
     try {
       await vscode.window.withProgress(
         {
@@ -177,28 +180,40 @@ export class UpdateChecker implements vscode.Disposable {
         async (progress) => {
           progress.report({ message: 'ダウンロード中' });
           const bytes = await downloadVerifiedAsset(asset, this.userAgent);
-          await vscode.workspace.fs.createDirectory(dir);
-          await vscode.workspace.fs.writeFile(file, bytes);
+          // VSCode が .vsix を導入できるのは file: (リモート接続時は vscode-remote:)の場所だけ。
+          // globalStorageUri は vscode-userdata: のことがあり "No Servers" で拒否されるため、
+          // OS の一時フォルダに毎回新しく作る専用のフォルダへ置く。
+          dir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-codex-status-'));
+          const file = path.join(dir, `${this.assetBaseName}-${latest.version}.vsix`);
+          await fs.writeFile(file, bytes);
           progress.report({ message: 'インストール中' });
-          await vscode.commands.executeCommand('workbench.extensions.installExtension', file);
+          await vscode.commands.executeCommand(
+            'workbench.extensions.installExtension',
+            vscode.Uri.file(file)
+          );
         }
       );
     } catch (err) {
-      const message = errorMessage(err);
-      this.appendLog(`v${latest.version} のインストールに失敗しました: ${message}`);
+      failure = errorMessage(err);
+    } finally {
+      this.installing = false;
+      // 導入後(または失敗時)の .vsix は不要。消せなくても一時フォルダなので害はない。
+      if (dir) {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
+
+    if (failure !== undefined) {
+      this.appendLog(`v${latest.version} のインストールに失敗しました: ${failure}`);
       const open = 'リリースページを開く';
       const choice = await vscode.window.showErrorMessage(
-        `Claude & Codex Status v${latest.version} のインストールに失敗しました: ${message}`,
+        `Claude & Codex Status v${latest.version} のインストールに失敗しました: ${failure}`,
         open
       );
       if (choice === open) {
         await vscode.env.openExternal(vscode.Uri.parse(latest.pageUrl));
       }
       return;
-    } finally {
-      this.installing = false;
-      // 導入後(または失敗時)の .vsix は不要。消せなくても次回の上書きで済む。
-      await Promise.resolve(vscode.workspace.fs.delete(file, { useTrash: false })).catch(() => undefined);
     }
 
     this.appendLog(`v${latest.version} をインストールしました`);

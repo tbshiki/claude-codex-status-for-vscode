@@ -65,9 +65,19 @@
       },
       {
         "command": "claudeCodexStatus.checkForUpdates",
-        "title": "Claude & Codex: 更新を確認"
+        "category": "Claude & Codex",
+        "title": "アップデートを確認"
       }
     ],
+    "menus": {
+      "extension/context": [
+        {
+          "command": "claudeCodexStatus.checkForUpdates",
+          "group": "2_configure",
+          "when": "extension == 'local.claude-codex-status' && extensionStatus == installed"
+        }
+      ]
+    },
     "configuration": {
       "title": "Claude & Codex Status",
       "properties": {
@@ -144,7 +154,7 @@
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "起動後と24時間ごとに GitHub Releases で新しいバージョンを確認し、あれば通知します(通知の「インストール」を押したときだけ .vsix をダウンロードして導入します)。トークンなどの情報は送りません。コマンド「更新を確認」はこの設定に関係なく使えます。"
+          "description": "起動後と24時間ごとに GitHub Releases で新しいバージョンを確認し、あれば通知します(通知の「インストール」を押したときだけ .vsix をダウンロードして導入します)。トークンなどの情報は送りません。手動の「アップデートを確認」(拡張機能ビューのこの拡張機能の右クリックメニュー、またはコマンドパレット)はこの設定に関係なく使えます。"
         }
       }
     }

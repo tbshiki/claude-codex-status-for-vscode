@@ -76,7 +76,6 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
   - 各枠のリセット時刻・リセットまでの残り時間
   - 最終取得時刻
   - クリックでの再取得の案内
-  - 更新の確認(4.6)へのリンク
 - どの項目のツールチップにも全プロバイダの詳細を載せるが、ホバーした項目のプロバイダを先頭に置く
 - **制約**: 隣接する項目のツールチップ本文(Markdown文字列)を同一にしてはならない。VSCode はホバーの同一性を本文文字列で判定し(hoverService の `getHoverIdFromContent`)、表示中と同一内容の表示要求を無視するため、同一だと項目間の移動でホバーが表示されなくなる
 
@@ -88,7 +87,7 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 | `claudeCodexStatus.refreshClaude` | Claude & Codex: Claudeのみ更新 | Claudeのみ再取得 |
 | `claudeCodexStatus.refreshCodex` | Claude & Codex: Codexのみ更新 | Codexのみ再取得 |
 | `claudeCodexStatus.resumeAllMonitoring` | (パレット非表示) | 全プロバイダの監視を再開。全停止時の最小表示のクリック先 |
-| `claudeCodexStatus.checkForUpdates` | Claude & Codex: 更新を確認 | GitHub Releases の最新版をすぐ確認する(4.6)。最新のときも結果を知らせる |
+| `claudeCodexStatus.checkForUpdates` | Claude & Codex: アップデートを確認 | GitHub Releases の最新版をすぐ確認する(4.6)。最新のときも結果を知らせる。拡張機能ビューのこの拡張機能の右クリック(歯車)メニューにも出す |
 
 ### 4.4 設定項目(案)
 
@@ -127,9 +126,11 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 - 到達不能(ネットワーク層)とAPI起因のエラー(HTTP応答あり)を混同しない。前者のみ `NetworkError` とする
 - 両プロバイダとも独立して動作し、片方が失敗してももう片方の表示に影響しない
 
-### 4.6 更新の通知
+### 4.6 アップデートの通知
 
-Marketplace に公開していないため、VSCode の自動更新は効かない。GitHub Releases に公開した版を拡張機能が自分で確認し、利用者に知らせる。
+Marketplace に公開していないため、VSCode の自動更新は効かない(拡張機能ビューの「更新」ボタンにも出ない)。GitHub Releases に公開した版を拡張機能が自分で確認し、利用者に知らせる。
+
+利用者向けの文言は「アップデート」とし、残量の再取得(「今すぐ更新」など)と区別する。手動の確認はふだん目に入らない場所に置く(ステータスバーやホバーには出さず、拡張機能ビューの右クリックメニューとコマンドパレットだけ)。
 
 - 確認先: `https://api.github.com/repos/<owner>/<repo>/releases/latest`(下書きとプレリリースは対象外)。リポジトリは `package.json` の `repository` から求め、GitHub の https の URL でなければ確認しない
 - 送る情報: `User-Agent`(`claude-codex-status/<版>`)だけ。トークンや認証情報は送らない
@@ -138,10 +139,11 @@ Marketplace に公開していないため、VSCode の自動更新は効かな�
 - 通知: 新しい版があれば「インストール」「リリースノート」「このバージョンをスキップ」を出す。スキップした版は自動の確認では再び通知しない(コマンドでの確認では通知する)。リリースの本文は表示しない
 - 導入(「インストール」を押したときだけ):
   - `<name>-<version>.vsix`(無ければ唯一の `.vsix`)を `https://github.com/<owner>/<repo>/releases/download/` から取得する
-  - API が返す `digest`(SHA-256)と一致した場合だけ、`globalStorageUri` に保存して `workbench.extensions.installExtension` で導入し、再読み込みを案内する。導入後は `.vsix` を消す
+  - API が返す `digest`(SHA-256)と一致した場合だけ、OS の一時フォルダに毎回新しく作る専用のフォルダへ保存し、`workbench.extensions.installExtension` で導入して再読み込みを案内する。導入後(失敗時も)はフォルダごと消す
+  - 保存先は `file:` の場所にする。VSCode が `.vsix` を導入できるのは `file:`(リモート接続時は `vscode-remote:`)だけで、`globalStorageUri`(`vscode-userdata:` のことがある)を渡すと "No Servers" で拒否される
   - SHA-256 が無い `.vsix` は導入に使わない(通知は「リリースノート」と「スキップ」だけになる)
   - 失敗したら原因とリリースページへのリンクを出す
-- 設定 `claudeCodexStatus.updateCheck.enabled` を `false` にすると自動の確認をやめる。コマンド「更新を確認」は設定に関係なく使える
+- 設定 `claudeCodexStatus.updateCheck.enabled` を `false` にすると自動の確認をやめる。手動の「アップデートを確認」は設定に関係なく使える
 - 自動の確認の失敗(到達不能・レート制限など)は通知せず、出力パネルに記録するだけにする。残量の表示には影響させない
 - リリースの運用: タグは `vX.Y.Z`、`npm run package` で作った `claude-codex-status-<version>.vsix` を添付し、下書き・プレリリースにしない
 

@@ -35,11 +35,11 @@
 | Claude | `https://api.anthropic.com/api/oauth/usage` | Claude のアクセストークン（`Authorization` ヘッダ） |
 | Codex | `https://chatgpt.com/backend-api/wham/usage` | Codex のアクセストークン（`Authorization` ヘッダ）、アカウント ID（`ChatGPT-Account-Id` ヘッダ） |
 
-- 上記と、次の「更新の確認」のほかに通信はしません。テレメトリも送りません。
+- 上記と、次の「アップデートの確認」のほかに通信はしません。テレメトリも送りません。
 - 診断コマンド「生の使用状況を表示」は、Claude の応答の本文を出力パネルに表示します。応答にトークンは含まれず、トークンを表示やログに出すこともしません。
 - 実行時に使う外部のパッケージはありません（`package.json` の `dependencies` は空です）。`devDependencies` はビルドとパッケージングにだけ使い、`.vsix` には含めません。
 
-### 更新の確認
+### アップデートの確認
 
 新しいバージョンを知らせるため、GitHub Releases を確認します。トークンや認証情報は送りません。
 
@@ -49,5 +49,6 @@
 | `.vsix` の取得（通知の「インストール」を押したときだけ） | `https://github.com/tbshiki/claude-codex-status-for-vscode/releases/download/...`（GitHub の配信用のホストへリダイレクトされます） | `User-Agent`（`claude-codex-status/<版>`）だけ |
 
 - `.vsix` は、GitHub の API が示す SHA-256 と一致した場合だけ VSCode に導入します。一致しなければ導入しません。利用者が「インストール」を押さない限り、ダウンロードも導入もしません。
+- ダウンロードした `.vsix` は、OS の一時フォルダの中に毎回新しく作る専用のフォルダへ置き、導入が終わったら（失敗しても）フォルダごと消します。
 - リリースの本文は表示しません。通知に出すのは、形式を確かめた版の番号だけです。
 - 自動の確認は設定 `claudeCodexStatus.updateCheck.enabled` を `false` にすると止められます。
