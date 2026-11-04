@@ -39,6 +39,8 @@ npm run package   # vsce で dist/ へ .vsix を生成(直近3件のみ保持)
 
 VS Code で `F5`（拡張機能のデバッグ実行）を押すと、拡張機能ホストが起動しステータスバーに残量が表示されます。
 
+`package.json` の `overrides` で、`@vscode/vsce` が使う `minimatch` を脆弱性（GHSA-g3hv-75wg-m249）の修正版の 11 系に上げています。vsce は 10 系を指定していますが、11 系でも `.vsix` の中身が変わらないことを確かめています。vsce 自身が 11 系以上を使うようになったら、この `overrides` は外してください。
+
 ### 構成
 
 ```text
