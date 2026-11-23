@@ -43,7 +43,7 @@
 - 手順:
   1. `package.json` の版を上げた変更を `main` へ取り込む。
   2. ユーザーの確認を得てから、`main` のマージコミットに軽量タグ `vX.Y.Z` を付けて push する。
-  3. workflow が `.vsix` をビルドし、ビルドの証明（build provenance）を付けて下書きのリリースに添付する。タグのコミットが `main` の履歴にない場合と、タグと `package.json` の版が違う場合は失敗する。
+  3. workflow が `.vsix` をビルドし、ビルドの証明（build provenance）を付けて下書きのリリースに添付する。タグのコミットが `main` の履歴にない場合、タグと `package.json` の版が違う場合、テスト（`npm test`）が通らない場合は失敗する。
   4. リリースノート（日本語、前の版からの変更点とインストール方法）を書き、`gh release edit vX.Y.Z --notes-file <file> --draft=false` で公開する。
   5. `gh attestation verify` で添付の `.vsix` の証明を確かめる。
 - immutable releases を有効にしているため、公開後は添付ファイルとタグを変えられない。誤りは次の版で直す。

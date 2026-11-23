@@ -49,6 +49,9 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
       # 依存パッケージの install script は動かさない(パッケージングには不要)
       - run: npm ci --ignore-scripts
+      # main の必須チェック(build)は admin が bypass できるため、配布物を作る前にここでも確かめる。
+      # 公開したリリースは直せないので、テストが通らないコミットからは .vsix を作らない
+      - run: npm test
       - run: npm run package
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
