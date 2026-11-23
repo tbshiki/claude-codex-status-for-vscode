@@ -466,6 +466,11 @@ export class StatusBarManager {
     // 手動更新だけは待機が長い場合の救済としてバックオフを突破できる。
     const b = this.backoff.get(provider.id);
     if (!manual && b && now < b.until) {
+      // 監視の再開や設定での再有効化のあとは、再取得の予約が無いことがある。
+      // ホバーで案内している時刻に再取得できるよう、無ければ予約し直す。
+      if (!this.retryTimers.has(provider.id) && this.isMonitoringEnabled(provider.id)) {
+        this.scheduleRetry(provider.id, b.until - now);
+      }
       this.states.set(provider.id, {
         kind: 'rateLimited',
         retryAt: b.until,
