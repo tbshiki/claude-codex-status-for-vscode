@@ -23,6 +23,21 @@ type DisplayStyle = 'minimal' | 'verbose' | 'orca';
 /** ステータスバーのどちら側へ置くか。項目の作成時にしか指定できない。 */
 type BarAlignment = 'left' | 'right';
 
+/** ステータスバー上の置き場所。どちらも項目の作成時にしか指定できない。 */
+interface BarPlacement {
+  alignment: BarAlignment;
+  /** 並び順の優先度。左右どちら側でも、大きいほど左に置かれる。 */
+  priority: number;
+}
+
+/** 右側の既定の優先度。優先度 100 を使う他拡張(Live Server 等)の隣に置く。 */
+const DEFAULT_PRIORITY_RIGHT = 100;
+/**
+ * 左側の既定の優先度。「左に置く」は左端を期待されるため、Git のブランチ表示(10000)より
+ * 大きくする。リモートの表示(左端の >< )は VSCode が常に先頭へ置くため、その右隣になる。
+ */
+const DEFAULT_PRIORITY_LEFT = 1_000_000;
+
 /** 残量に応じた警告レベル。ステータスバーの背景色とアイコンに使う。 */
 type AlertLevel = 'normal' | 'warning' | 'critical';
 
@@ -91,8 +106,8 @@ export class StatusBarManager {
    * どこにも無くなり、設定を開くまで戻せなくなる。
    */
   private pausedItem: vscode.StatusBarItem;
-  /** 項目を作ったときの表示位置。設定と食い違ったら項目を作り直す。 */
-  private alignment: BarAlignment;
+  /** 項目を作ったときの置き場所。設定と食い違ったら項目を作り直す。 */
+  private placement: BarPlacement;
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
@@ -111,21 +126,25 @@ export class StatusBarManager {
       this.states.set(p.id, { kind: 'loading' });
       this.monitoringEnabled.set(p.id, true);
     }
-    this.alignment = configuredAlignment();
+    this.placement = configuredPlacement();
     this.pausedItem = this.createItems();
   }
 
   /**
-   * 現在の alignment でプロバイダ項目を作って this.items へ入れ、全停止時の最小表示を返す。
+   * 現在の placement でプロバイダ項目を作って this.items へ入れ、全停止時の最小表示を返す。
    * 取得済みの値や監視の停止状態(states / monitoringEnabled)には触れないので、
    * 表示位置の変更で作り直しても表示内容は引き継がれる。
    */
   private createItems(): vscode.StatusBarItem {
     const side =
-      this.alignment === 'left'
+      this.placement.alignment === 'left'
         ? vscode.StatusBarAlignment.Left
         : vscode.StatusBarAlignment.Right;
     const count = this.providers.length;
+    const base = this.placement.priority;
+    // 項目どうしの優先度の差。他の拡張に間へ割り込まれないよう極小にするが、
+    // 優先度が大きいと浮動小数の精度で差が消えるため、大きさに応じて広げる。
+    const step = Math.max(1e-9, Math.abs(base) * 1e-12);
     this.providers.forEach((p, index) => {
       // 第1引数の id は必ず項目ごとに変えること。省略すると VSCode 側で
       // id が拡張機能ID そのものになり(extHostStatusBar の update)、
@@ -133,12 +152,11 @@ export class StatusBarManager {
       // id 属性にそのまま入るため、重複した id を持つ要素が並び、
       // 項目間でホバーを移すと詳細が出なくなる。
       // 優先度は左右どちら側でも「大きいほど左」なので、定義順(Claude→Codex)で
-      // 左から並ぶよう下げていく。優先度 100 ちょうどを使う他拡張(Live Server 等)
-      // より僅かに上に置き、かつ差を極小にして、2項目の間に割り込まれないようにする。
+      // 左から並ぶよう下げていく。基準の優先度ちょうどを使う他拡張より僅かに上に置く。
       const item = vscode.window.createStatusBarItem(
         `claudeCodexStatus.${p.id}`,
         side,
-        100 + (count - index) * 1e-9
+        base + (count - index) * step
       );
       item.name = `${p.label} 残量`;
       item.command = 'claudeCodexStatus.refresh';
@@ -148,7 +166,7 @@ export class StatusBarManager {
     const paused = vscode.window.createStatusBarItem(
       'claudeCodexStatus.paused',
       side,
-      100 + (count + 1) * 1e-9
+      base + (count + 1) * step
     );
     paused.name = 'Claude & Codex 監視停止中';
     paused.text = PAUSED_ICON;
@@ -167,15 +185,18 @@ export class StatusBarManager {
   }
 
   /**
-   * statusBarAlignment の設定変更イベントから呼ぶ。表示位置は項目の作成後に変えられないため、
+   * statusBarAlignment / statusBarPriority の設定変更イベントから呼ぶ。置き場所は項目の作成後に変えられないため、
    * 設定と食い違うときだけ項目を作り直す。再取得はせず、手元の状態でそのまま描画する。
    */
-  syncAlignmentFromConfig(): void {
-    const next = configuredAlignment();
-    if (next === this.alignment) {
+  syncPlacementFromConfig(): void {
+    const next = configuredPlacement();
+    if (
+      next.alignment === this.placement.alignment &&
+      next.priority === this.placement.priority
+    ) {
       return;
     }
-    this.alignment = next;
+    this.placement = next;
     this.disposeItems();
     this.pausedItem = this.createItems();
     this.render();
@@ -757,12 +778,22 @@ function toDisplayStyle(value: string | undefined): DisplayStyle {
   return value === 'verbose' || value === 'orca' ? value : 'minimal';
 }
 
-/** 設定の表示位置を読む。'left' 以外(未設定・想定外の値)は従来どおり右にする。 */
-function configuredAlignment(): BarAlignment {
-  const value = vscode.workspace
-    .getConfiguration('claudeCodexStatus')
-    .get<string>('statusBarAlignment', 'right');
-  return value === 'left' ? 'left' : 'right';
+/**
+ * 設定の置き場所を読む。alignment は 'left' 以外(未設定・想定外の値)なら従来どおり右。
+ * priority は数値のときだけ使い、未設定(null)や想定外の値なら側ごとの既定値にする。
+ */
+function configuredPlacement(): BarPlacement {
+  const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
+  const alignment: BarAlignment =
+    cfg.get<string>('statusBarAlignment', 'right') === 'left' ? 'left' : 'right';
+  const custom = cfg.get<number | null>('statusBarPriority', null);
+  const priority =
+    typeof custom === 'number' && Number.isFinite(custom)
+      ? Math.max(-1e9, Math.min(1e9, custom))
+      : alignment === 'left'
+        ? DEFAULT_PRIORITY_LEFT
+        : DEFAULT_PRIORITY_RIGHT;
+  return { alignment, priority };
 }
 
 /** ツールチップ用の枠一覧を Markdown テーブルで返す。 */

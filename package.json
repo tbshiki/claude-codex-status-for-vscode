@@ -2,7 +2,7 @@
   "name": "claude-codex-status",
   "displayName": "Claude & Codex Status",
   "description": "Claude Code と OpenAI Codex CLI のレート残量(5時間枠/週枠)をVSCodeのステータスバーに常時表示します",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -132,10 +132,18 @@
           ],
           "enumDescriptions": [
             "ステータスバーの右側に表示します。",
-            "ステータスバーの左側に表示します。"
+            "ステータスバーの左側に表示します。既定では Git のブランチ表示より左(リモートの表示のすぐ右)に置きます。"
           ],
           "default": "right",
           "description": "ステータスバーのどちら側に表示するか。変更はすぐに反映されます。"
+        },
+        "claudeCodexStatus.statusBarPriority": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "description": "同じ側の中での並び順(優先度)。大きいほど左に表示されます。null(既定)なら、右側では 100、左側では 1000000(Git のブランチ表示より左)を使います。左側でブランチ表示より右に置きたい場合は 100 などを指定してください。"
         },
         "claudeCodexStatus.displayMode": {
           "type": "string",

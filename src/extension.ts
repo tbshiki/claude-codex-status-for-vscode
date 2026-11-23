@@ -59,8 +59,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       // 表示位置は項目の作り直しが要る。同じイベントに他の設定の変更が含まれていても
       // 取りこぼさないよう、下の分岐とは独立に見る(食い違いが無ければ何もしない)。
-      if (e.affectsConfiguration('claudeCodexStatus.statusBarAlignment')) {
-        status.syncAlignmentFromConfig();
+      if (
+        e.affectsConfiguration('claudeCodexStatus.statusBarAlignment') ||
+        e.affectsConfiguration('claudeCodexStatus.statusBarPriority')
+      ) {
+        status.syncPlacementFromConfig();
       }
       // 取得動作に影響する設定だけポーリングを再始動する(即時取得を伴うため)。
       // 表示のみの設定(displayMode / style)は API を叩かず再描画で済ませる。

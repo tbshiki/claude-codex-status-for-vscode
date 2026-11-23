@@ -100,6 +100,7 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
   "claudeCodexStatus.codex.authPath": "",
   "claudeCodexStatus.style": "minimal", // "minimal" | "verbose" | "orca"(Orca のステータスバーに合わせた書式。例: 使用済み ▰▰▱▱▱ 33% 2h 17m · 94% 27m · 37% Fable)
   "claudeCodexStatus.statusBarAlignment": "right", // "right" | "left"。表示位置は項目の作成時にしか決められないため、変更時は項目を作り直す(取得済みの値と監視の停止状態は引き継ぐ)
+  "claudeCodexStatus.statusBarPriority": null, // 同じ側の中での並び順(大きいほど左)。null なら右側 100、左側 1000000(Git のブランチ表示 10000 より左。リモートの表示より左には置けない)
   "claudeCodexStatus.displayMode": "remaining", // "remaining"(残量) | "used"(使用率)。ホバー内リンクでも切替可
   "claudeCodexStatus.warningRemainingPercent": 30, // 残量がこの%未満で該当プロバイダを黄文字+⚠。0で無効
   "claudeCodexStatus.criticalRemainingPercent": 10, // 残量がこの%未満で該当プロバイダを赤文字+エラーアイコン。0で無効
