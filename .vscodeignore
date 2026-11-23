@@ -1,5 +1,6 @@
 # Source and build config (compiled output in out/ is shipped instead)
 src/**
+test/**
 tsconfig.json
 **/*.ts
 **/*.map

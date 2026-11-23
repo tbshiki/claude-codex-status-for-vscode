@@ -39,7 +39,9 @@ npm run watch     # 変更を監視してビルド
 npm run package   # vsce で dist/ へ .vsix を生成(直近3件のみ保持)
 ```
 
-VS Code で `F5`（拡張機能のデバッグ実行）を押すと、拡張機能ホストが起動しステータスバーに残量が表示されます。
+VS Code で `F5`（拡張機能のデバッグ実行）を押すと、コンパイルしてから拡張機能ホストが起動し、ステータスバーに残量が表示されます（設定は `.vscode/launch.json`）。ターミナルから `code --extensionDevelopmentPath="$PWD"` でも起動できます。
+
+テストは `npm test` で実行します（コンパイルしてから `test/` を `node:test` で実行）。VSCode API は代役に差し替えるので、拡張機能ホストは起動せず、実際の API にも送りません。
 
 `package.json` の `overrides` で、`@vscode/vsce` が使う `minimatch` を脆弱性（GHSA-g3hv-75wg-m249）の修正版の 11 系に上げています。vsce は 10 系を指定していますが、11 系でも `.vsix` の中身が変わらないことを確かめています。vsce 自身が 11 系以上を使うようになったら、この `overrides` は外してください。
 
@@ -56,6 +58,7 @@ src/
   update/
     checker.ts          # アップデートの確認の間隔、通知、導入(VSCode API)
     github.ts           # GitHub Releases の最新版の取得と .vsix の検証
+test/                   # node:test のテスト(VSCode API は helpers/vscode-stub.js で差し替え)
 docs/requirements.md    # 要件定義書
 ```
 

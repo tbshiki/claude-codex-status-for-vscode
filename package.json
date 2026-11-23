@@ -191,6 +191,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
+    "test": "npm run compile && node --test test/github.test.js test/providers.test.js test/statusBar.test.js",
     "package": "node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && vsce package --no-yarn --out dist/ && node scripts/prune-vsix.js"
   },
   "devDependencies": {
