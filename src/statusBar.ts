@@ -14,6 +14,30 @@ import {
 /** パーセントの表示種別。remaining は「あと何%使えるか」、used は「何%使ったか」。 */
 type DisplayMode = 'remaining' | 'used';
 
+/**
+ * ステータスバー本文の書式。minimal は「5h : 62%」、verbose はリセットまでの時間付き、
+ * orca は Orca のステータスバーに合わせた「▰▰▱▱▱ 33% 2h 17m · 94% 27m」形式。
+ */
+type DisplayStyle = 'minimal' | 'verbose' | 'orca';
+
+/** ステータスバーのどちら側へ置くか。項目の作成時にしか指定できない。 */
+type BarAlignment = 'left' | 'right';
+
+/** ステータスバー上の置き場所。どちらも項目の作成時にしか指定できない。 */
+interface BarPlacement {
+  alignment: BarAlignment;
+  /** 並び順の優先度。左右どちら側でも、大きいほど左に置かれる。 */
+  priority: number;
+}
+
+/** 右側の既定の優先度。優先度 100 を使う他拡張(Live Server 等)の隣に置く。 */
+const DEFAULT_PRIORITY_RIGHT = 100;
+/**
+ * 左側の既定の優先度。「左に置く」は左端を期待されるため、Git のブランチ表示(10000)より
+ * 大きくする。リモートの表示(左端の >< )は VSCode が常に先頭へ置くため、その右隣になる。
+ */
+const DEFAULT_PRIORITY_LEFT = 1_000_000;
+
 /** 残量に応じた警告レベル。ステータスバーの背景色とアイコンに使う。 */
 type AlertLevel = 'normal' | 'warning' | 'critical';
 
@@ -49,6 +73,12 @@ interface AuthPresentation {
 const PAUSED_ICON = '$(debug-pause)';
 
 const MIN_INTERVAL_SEC = 60;
+/**
+ * 取得間隔の上限(24時間)。setInterval は約24.8日(2^31-1 ms)を超える値や NaN を
+ * 1ms として扱うため、上限と型の確認が無いと、設定値しだいで API を連打してしまう。
+ */
+const MAX_INTERVAL_SEC = 24 * 60 * 60;
+const DEFAULT_INTERVAL_SEC = 300;
 /** 429 バックオフの基準(初回)と上限。Retry-After があればそちらを優先。 */
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_CAP_MS = 15 * 60_000;
@@ -81,7 +111,9 @@ export class StatusBarManager {
    * 停止した項目はバーから消えるため、これが無いと再開用のホバー先が
    * どこにも無くなり、設定を開くまで戻せなくなる。
    */
-  private readonly pausedItem: vscode.StatusBarItem;
+  private pausedItem: vscode.StatusBarItem;
+  /** 項目を作ったときの置き場所。設定と食い違ったら項目を作り直す。 */
+  private placement: BarPlacement;
   private readonly states = new Map<ProviderId, ProviderStatus>();
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
@@ -96,37 +128,84 @@ export class StatusBarManager {
   private alertColorsEnabled: boolean | undefined;
 
   constructor(private readonly providers: UsageProvider[]) {
-    providers.forEach((p, index) => {
+    for (const p of providers) {
+      this.states.set(p.id, { kind: 'loading' });
+      this.monitoringEnabled.set(p.id, true);
+    }
+    this.placement = configuredPlacement();
+    this.pausedItem = this.createItems();
+  }
+
+  /**
+   * 現在の placement でプロバイダ項目を作って this.items へ入れ、全停止時の最小表示を返す。
+   * 取得済みの値や監視の停止状態(states / monitoringEnabled)には触れないので、
+   * 表示位置の変更で作り直しても表示内容は引き継がれる。
+   */
+  private createItems(): vscode.StatusBarItem {
+    const side =
+      this.placement.alignment === 'left'
+        ? vscode.StatusBarAlignment.Left
+        : vscode.StatusBarAlignment.Right;
+    const count = this.providers.length;
+    const base = this.placement.priority;
+    // 項目どうしの優先度の差。他の拡張に間へ割り込まれないよう極小にするが、
+    // 優先度が大きいと浮動小数の精度で差が消えるため、大きさに応じて広げる。
+    const step = Math.max(1e-9, Math.abs(base) * 1e-12);
+    this.providers.forEach((p, index) => {
       // 第1引数の id は必ず項目ごとに変えること。省略すると VSCode 側で
       // id が拡張機能ID そのものになり(extHostStatusBar の update)、
       // 全項目が同じ id を共有する。この id はステータスバー項目の DOM の
       // id 属性にそのまま入るため、重複した id を持つ要素が並び、
       // 項目間でホバーを移すと詳細が出なくなる。
-      // 定義順(Claude→Codex)で左から並ぶよう優先度を下げていく。
-      // 優先度 100 ちょうどを使う他拡張(Live Server 等)より僅かに上に
-      // 置き、かつ差を極小にして、2項目の間に割り込まれないようにする。
+      // 優先度は左右どちら側でも「大きいほど左」なので、定義順(Claude→Codex)で
+      // 左から並ぶよう下げていく。基準の優先度ちょうどを使う他拡張より僅かに上に置く。
       const item = vscode.window.createStatusBarItem(
         `claudeCodexStatus.${p.id}`,
-        vscode.StatusBarAlignment.Right,
-        100 + (providers.length - index) * 1e-9
+        side,
+        base + (count - index) * step
       );
       item.name = `${p.label} 残量`;
       item.command = 'claudeCodexStatus.refresh';
       this.items.set(p.id, item);
-      this.states.set(p.id, { kind: 'loading' });
-      this.monitoringEnabled.set(p.id, true);
     });
     // 全停止時はこれだけが残るため、プロバイダ項目と同じ位置へ置く。
-    this.pausedItem = vscode.window.createStatusBarItem(
+    const paused = vscode.window.createStatusBarItem(
       'claudeCodexStatus.paused',
-      vscode.StatusBarAlignment.Right,
-      100 + (providers.length + 1) * 1e-9
+      side,
+      base + (count + 1) * step
     );
-    this.pausedItem.name = 'Claude & Codex 監視停止中';
-    this.pausedItem.text = PAUSED_ICON;
+    paused.name = 'Claude & Codex 監視停止中';
+    paused.text = PAUSED_ICON;
     // 全停止の最小表示から復帰する主導線。ここで refresh を割り当てると、
     // 隠れたまま値だけ更新され、クリックしても何も起きないように見える。
-    this.pausedItem.command = 'claudeCodexStatus.resumeAllMonitoring';
+    paused.command = 'claudeCodexStatus.resumeAllMonitoring';
+    return paused;
+  }
+
+  private disposeItems(): void {
+    for (const item of this.items.values()) {
+      item.dispose();
+    }
+    this.items.clear();
+    this.pausedItem.dispose();
+  }
+
+  /**
+   * statusBarAlignment / statusBarPriority の設定変更イベントから呼ぶ。置き場所は項目の作成後に変えられないため、
+   * 設定と食い違うときだけ項目を作り直す。再取得はせず、手元の状態でそのまま描画する。
+   */
+  syncPlacementFromConfig(): void {
+    const next = configuredPlacement();
+    if (
+      next.alignment === this.placement.alignment &&
+      next.priority === this.placement.priority
+    ) {
+      return;
+    }
+    this.placement = next;
+    this.disposeItems();
+    this.pausedItem = this.createItems();
+    this.render();
   }
 
   /** 全プロバイダの監視を再開する。全停止時の最小表示のクリックから呼ぶ。 */
@@ -148,10 +227,7 @@ export class StatusBarManager {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
-    for (const item of this.items.values()) {
-      item.dispose();
-    }
-    this.pausedItem.dispose();
+    this.disposeItems();
   }
 
   /** 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。 */
@@ -164,10 +240,7 @@ export class StatusBarManager {
       return;
     }
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
-    const intervalSec = Math.max(
-      MIN_INTERVAL_SEC,
-      cfg.get<number>('pollIntervalSeconds', 300)
-    );
+    const intervalSec = toIntervalSec(cfg.get<unknown>('pollIntervalSeconds'));
     void this.refreshAll();
     this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
   }
@@ -373,7 +446,7 @@ export class StatusBarManager {
   private render(): void {
     const enabled = this.enabledProviders();
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
-    const verbose = cfg.get<string>('style', 'minimal') === 'verbose';
+    const style = toDisplayStyle(cfg.get<string>('style', 'minimal'));
     const mode = this.currentDisplayMode();
     const thresholds = getAlertThresholds(cfg);
     // 監視停止したプロバイダはバーから消す。全部消えると再開できなくなるため、
@@ -389,6 +462,10 @@ export class StatusBarManager {
       this.pausedItem.hide();
     }
 
+    // orca では Orca と同じく、並びの先頭に「何の%か」の見出しを1つだけ付ける。
+    // 項目を増やさず、表示中の左端の項目の本文へ前置きする。
+    let heading = style === 'orca' ? `${mode === 'remaining' ? '残り' : '使用済み'}  ` : '';
+
     for (const p of this.providers) {
       const item = this.items.get(p.id);
       if (!item) {
@@ -398,7 +475,8 @@ export class StatusBarManager {
         item.hide();
         continue;
       }
-      item.text = this.renderSegment(p, verbose, mode, thresholds);
+      item.text = heading + this.renderSegment(p, style, mode, thresholds);
+      heading = '';
       // どの項目にホバーしても全プロバイダの詳細を出すが、ホバーした項目の
       // プロバイダを先頭に置き、内容を項目ごとに必ず変える。並び替えは
       // 見やすさのためだけではない: VSCode はホバーの同一性を Markdown
@@ -436,7 +514,7 @@ export class StatusBarManager {
 
   private renderSegment(
     provider: UsageProvider,
-    verbose: boolean,
+    style: DisplayStyle,
     mode: DisplayMode,
     thresholds: AlertThresholds
   ): string {
@@ -452,18 +530,18 @@ export class StatusBarManager {
       case 'notReady':
         return `${head}: 準備中`;
       case 'ok':
-        return `${head} ${formatUsage(state.usage, verbose, mode, thresholds)}`;
+        return `${head} ${formatUsage(state.usage, style, mode, thresholds)}`;
       case 'rateLimited':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(clock)`
+          ? `${head} ${formatUsage(state.last, style, mode, thresholds)} $(clock)`
           : `${head}: 待機中 $(clock)`;
       case 'offline':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(cloud-offline)`
+          ? `${head} ${formatUsage(state.last, style, mode, thresholds)} $(cloud-offline)`
           : `${head}: 接続不可 $(cloud-offline)`;
       case 'error':
         return state.last
-          ? `${head} ${formatUsage(state.last, verbose, mode, thresholds)} $(alert)`
+          ? `${head} ${formatUsage(state.last, style, mode, thresholds)} $(alert)`
           : `${head}: 取得失敗 $(alert)`;
     }
   }
@@ -638,10 +716,14 @@ function appendLastKnown(
 
 function formatUsage(
   usage: ProviderUsage,
-  verbose: boolean,
+  style: DisplayStyle,
   mode: DisplayMode,
   thresholds: AlertThresholds
 ): string {
+  if (style === 'orca') {
+    return formatUsageOrca(usage, mode, thresholds);
+  }
+  const verbose = style === 'verbose';
   // モデル別(Fable 等)も含め全枠を表示。": " の前後に半角スペースを入れる。
   // ステータスバー本文は部分的な色付けができないため、逼迫はアイコンで示す。
   const parts = usage.limits.map((l) => {
@@ -649,6 +731,80 @@ function formatUsage(
     return verbose && l.resetsAt ? `${base} (${formatResetIn(l.resetsAt)})` : base;
   });
   return parts.join('  ');
+}
+
+/**
+ * Orca のステータスバーに合わせた書式。「▰▰▱▱▱ 33% 2h 17m · 94% 27m · 37% Fable」。
+ * 枠の名前(5h / 7d)は出さず、%の後ろにリセットまでの時間を添える。モデル別の枠は
+ * 時間の代わりにモデル名を添える。先頭のバーは先頭の枠(通常はセッション枠)を表し、
+ * 表示中の%(残量なら残量、使用率なら使用率)をそのまま塗る。
+ */
+function formatUsageOrca(
+  usage: ProviderUsage,
+  mode: DisplayMode,
+  thresholds: AlertThresholds
+): string {
+  const parts = usage.limits.map((l) => {
+    const pct = formatPercent(l, mode);
+    const suffix = l.scopeName ?? formatResetCompact(l.resetsAt);
+    // 逼迫のアイコンは%と時間の間に挟まず、その枠の末尾に付ける。
+    return `${suffix ? `${pct} ${suffix}` : pct}${alertIcon(limitLevel(l, thresholds))}`;
+  });
+  const lead = usage.limits[0];
+  if (!lead) {
+    return '';
+  }
+  const shown = mode === 'remaining' ? 100 - lead.utilization : lead.utilization;
+  return `${meter(shown, 5)} ${parts.join(' · ')}`;
+}
+
+/** リセットまでの時間を「2d 7h」「2h 17m」「27m」の形で返す。不明なら空文字。 */
+function formatResetCompact(resetsAt: string | null): string {
+  if (!resetsAt) {
+    return '';
+  }
+  const target = new Date(resetsAt).getTime();
+  if (Number.isNaN(target)) {
+    return '';
+  }
+  const totalMin = Math.max(0, Math.floor((target - Date.now()) / 60000));
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+  return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+}
+
+/** 設定の取得間隔(秒)を下限〜上限へ収める。数値でなければ既定値にする。 */
+function toIntervalSec(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_INTERVAL_SEC;
+  }
+  return Math.max(MIN_INTERVAL_SEC, Math.min(MAX_INTERVAL_SEC, value));
+}
+
+function toDisplayStyle(value: string | undefined): DisplayStyle {
+  return value === 'verbose' || value === 'orca' ? value : 'minimal';
+}
+
+/**
+ * 設定の置き場所を読む。alignment は 'left' 以外(未設定・想定外の値)なら従来どおり右。
+ * priority は数値のときだけ使い、未設定(null)や想定外の値なら側ごとの既定値にする。
+ */
+function configuredPlacement(): BarPlacement {
+  const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
+  const alignment: BarAlignment =
+    cfg.get<string>('statusBarAlignment', 'right') === 'left' ? 'left' : 'right';
+  const custom = cfg.get<number | null>('statusBarPriority', null);
+  const priority =
+    typeof custom === 'number' && Number.isFinite(custom)
+      ? Math.max(-1e9, Math.min(1e9, custom))
+      : alignment === 'left'
+        ? DEFAULT_PRIORITY_LEFT
+        : DEFAULT_PRIORITY_RIGHT;
+  return { alignment, priority };
 }
 
 /** ツールチップ用の枠一覧を Markdown テーブルで返す。 */
@@ -715,10 +871,13 @@ function colorize(text: string, level: AlertLevel): string {
   return `<span style="color:${color};">${text}</span>`;
 }
 
-/** 残量率(0-100)を10段の「▰(残)▱(使用済)」バーにする。 */
-function meter(remainingPercent: number): string {
-  const filled = Math.max(0, Math.min(10, Math.round(remainingPercent / 10)));
-  return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
+/** 割合(0-100)を「▰(塗り)▱(中抜き)」のバーにする。既定は10段。 */
+function meter(percent: number, segments = 10): string {
+  const filled = Math.max(
+    0,
+    Math.min(segments, Math.round((percent / 100) * segments))
+  );
+  return '▰'.repeat(filled) + '▱'.repeat(segments - filled);
 }
 
 /**

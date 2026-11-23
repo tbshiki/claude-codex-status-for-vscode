@@ -284,13 +284,13 @@ function mapLimit(l: RawLimit): UsageLimit {
       return limit('週(全体)', '7d', utilization, resetsAt, true, active);
     case 'weekly_scoped':
       if (model) {
-        return limit(`週(${model})`, `${model} 7d`, utilization, resetsAt, false, active);
+        return limit(`週(${model})`, `${model} 7d`, utilization, resetsAt, false, active, model);
       }
       return limit('週(スコープ)', 'wk', utilization, resetsAt, false, active);
     default: {
       // 未知の種類も表示だけはできるよう拾う(フェイルソフト)。
       const name = model ?? sanitizeApiText(l.kind) ?? '不明';
-      return limit(name, name, utilization, resetsAt, false, active);
+      return limit(name, name, utilization, resetsAt, false, active, name);
     }
   }
 }
@@ -342,9 +342,10 @@ function limit(
   utilization: number,
   resetsAt: string | null,
   primary: boolean,
-  active: boolean
+  active: boolean,
+  scopeName?: string
 ): UsageLimit {
-  return { label, shortLabel, utilization, resetsAt, primary, active };
+  return { label, shortLabel, utilization, resetsAt, primary, active, scopeName };
 }
 
 /**
