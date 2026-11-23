@@ -115,6 +115,30 @@ export class RateLimitError extends Error {
   }
 }
 
+/**
+ * Retry-After ヘッダ(秒数 or HTTP-date)をミリ秒へ変換する。
+ * 解釈できなければ undefined を返し、呼び出し側の既定バックオフに委ねる。
+ * 値の上限・下限は表示側(statusBar)で丸める。
+ */
+export function parseRetryAfter(
+  value: string | string[] | null | undefined
+): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed) * 1000;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+  return undefined;
+}
+
 export interface UsageProvider {
   readonly id: ProviderId;
   /** ステータスバーに出す短いラベル(例: "Claude")。 */

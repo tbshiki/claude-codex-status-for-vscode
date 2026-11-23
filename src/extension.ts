@@ -74,6 +74,15 @@ export function activate(context: vscode.ExtensionContext): void {
         'claudeCodexStatus.claude.credentialsPath',
         'claudeCodexStatus.codex.authPath',
       ].some((key) => e.affectsConfiguration(key));
+      // 1回のイベントに複数の設定の変更が入ることがある(settings.json の保存、設定の同期)。
+      // どれかを処理したら残りを飛ばす、という分岐にはせず、該当するものをすべて処理する。
+      if (e.affectsConfiguration('claudeCodexStatus.displayMode')) {
+        // settings.json の直接編集にも追随できるよう、設定値を正として同期する。
+        status.syncDisplayModeFromConfig();
+      }
+      if (e.affectsConfiguration('claudeCodexStatus.statusBarAlertColors')) {
+        status.syncAlertColorsFromConfig();
+      }
       if (needsRestart) {
         // 設定編集中はイベントが連続しうるため、少し待ってから1回だけ再始動する
         // (restartPolling は即時取得を伴うので、連打で API を叩かない)。
@@ -81,14 +90,9 @@ export function activate(context: vscode.ExtensionContext): void {
           clearTimeout(configRestartTimer);
         }
         configRestartTimer = setTimeout(() => status.restartPolling(), 500);
-      } else if (e.affectsConfiguration('claudeCodexStatus.displayMode')) {
-        // settings.json の直接編集にも追随できるよう、設定値を正として同期する。
-        status.syncDisplayModeFromConfig();
-      } else if (e.affectsConfiguration('claudeCodexStatus.statusBarAlertColors')) {
-        status.syncAlertColorsFromConfig();
-      } else {
-        status.rerender();
       }
+      // 表示だけの設定(style やしきい値)も含め、手元の状態ですぐ描き直す。
+      status.rerender();
     }),
     { dispose: () => configRestartTimer && clearTimeout(configRestartTimer) }
   );

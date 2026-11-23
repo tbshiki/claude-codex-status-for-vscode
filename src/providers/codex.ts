@@ -9,9 +9,12 @@ import {
   RateLimitError,
   UsageLimit,
   UsageProvider,
+  parseRetryAfter,
 } from './types';
 
 const CODEX_REQUEST_TIMEOUT_MS = 15_000;
+/** 使用状況レスポンスの受信上限(バイト)。通常は数KBのため、異常応答からメモリを守る保険。 */
+const MAX_RESPONSE_BYTES = 1_000_000;
 
 interface CodexRateLimitWindow {
   usedPercent?: unknown;
@@ -90,8 +93,23 @@ function appendWhamWindow(
     : undefined;
   const isFiveHour = primary && windowSeconds === 18_000;
   const isSevenDay = !primary && windowSeconds === 604_800;
-  const shortLabel = isFiveHour ? '5h' : isSevenDay ? '7d' : primary ? '全体' : '7d';
-  const label = isFiveHour ? 'セッション(5h)' : isSevenDay ? '週' : primary ? '全体' : '週';
+  // 第2枠の長さが7日でないと分かっているときは、「週」と決めつけず実際の長さで表す。
+  // 長さが分からないときは、従来どおり週の枠として扱う。
+  const other = !primary && !isSevenDay ? windowName(windowSeconds) : undefined;
+  const shortLabel = isFiveHour
+    ? '5h'
+    : isSevenDay
+      ? '7d'
+      : primary
+        ? '全体'
+        : other?.shortLabel ?? '7d';
+  const label = isFiveHour
+    ? 'セッション(5h)'
+    : isSevenDay
+      ? '週'
+      : primary
+        ? '全体'
+        : other?.label ?? '週';
   const resetsAt = toIsoTimestamp(value.reset_at) ?? toIsoTimestampAfter(value.reset_after_seconds);
   // 表示側の契約に合わせ、他プロバイダと同じ「使用率」で格納する。
   limits.push({
@@ -102,6 +120,24 @@ function appendWhamWindow(
     primary,
     active: usedPercent > 0,
   });
+}
+
+/** 枠の長さ(秒)を「30d / 30日」「12h / 12時間」の名前にする。割り切れなければ undefined。 */
+function windowName(
+  seconds: number | undefined
+): { shortLabel: string; label: string } | undefined {
+  if (seconds === undefined) {
+    return undefined;
+  }
+  if (seconds % 86_400 === 0) {
+    const days = seconds / 86_400;
+    return { shortLabel: `${days}d`, label: `${days}日` };
+  }
+  if (seconds % 3_600 === 0) {
+    const hours = seconds / 3_600;
+    return { shortLabel: `${hours}h`, label: `${hours}時間` };
+  }
+  return undefined;
 }
 
 /**
@@ -251,23 +287,70 @@ async function requestWhamUsage(
       );
     }
     if (response.status === 429) {
-      throw new RateLimitError('Codex のレート制限により取得できませんでした');
+      throw new RateLimitError(
+        'Codex のレート制限により取得できませんでした',
+        parseRetryAfter(response.headers.get('retry-after'))
+      );
     }
     if (!response.ok) {
       throw new Error(`Codex の使用状況取得に失敗しました (HTTP ${response.status})`);
     }
+    let text: string;
     try {
-      return await response.json();
+      text = await readLimitedText(response);
     } catch (err) {
       if (isAbort(err)) {
         throw new NetworkError('Codex の使用状況取得がタイムアウトしました');
       }
+      if (err instanceof ResponseTooLargeError) {
+        throw new Error(err.message);
+      }
+      // ヘッダは届いたが、本文の途中で切れた。一時的な接続の問題として扱う。
+      const cause = err instanceof Error ? err.message : String(err);
+      throw new NetworkError(`Codex の応答の受信中に接続が切れました (${cause})`);
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
       // 応答は届いているので接続の問題ではない。API 仕様変更の疑いとして扱う。
       throw new Error('Codex のレスポンスのJSON解析に失敗しました');
     }
   } finally {
     clearTimeout(timer);
   }
+}
+
+class ResponseTooLargeError extends Error {
+  constructor() {
+    super('レスポンスサイズが上限を超えました');
+    this.name = 'ResponseTooLargeError';
+  }
+}
+
+/**
+ * 本文を MAX_RESPONSE_BYTES まで読む。超えたら読むのをやめて ResponseTooLargeError を投げる。
+ * バイト列のまま集めてから UTF-8 として読む(境界をまたぐ多バイト文字を壊さない)。
+ */
+async function readLimitedText(response: Response): Promise<string> {
+  if (!response.body) {
+    return '';
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    received += value.byteLength;
+    if (received > MAX_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new ResponseTooLargeError();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   RateLimitError,
   UsageLimit,
   UsageProvider,
+  parseRetryAfter,
 } from './types';
 
 /** api.anthropic.com が返す生レスポンス(非公式・非保証)。 */
@@ -37,7 +38,7 @@ interface RawUsageResponse {
   limits?: RawLimit[];
 }
 
-/** 使用状況レスポンスの受信上限。通常は数KBのため、異常応答からメモリを守る保険。 */
+/** 使用状況レスポンスの受信上限(バイト)。通常は数KBのため、異常応答からメモリを守る保険。 */
 const MAX_RESPONSE_BYTES = 1_000_000;
 
 /**
@@ -160,17 +161,38 @@ export class ClaudeProvider implements UsageProvider {
           timeout: 10000,
         },
         (res) => {
-          let data = '';
-          res.on('data', (chunk) => {
-            data += chunk;
-            if (data.length > MAX_RESPONSE_BYTES) {
+          // チャンクごとに文字列へ直すと、境界をまたぐ多バイト文字が壊れる。
+          // バイト列のまま集め、最後にまとめて UTF-8 として読む。
+          const chunks: Buffer[] = [];
+          let received = 0;
+          res.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
+            received += chunk.length;
+            if (received > MAX_RESPONSE_BYTES) {
               // destroy には理由を渡す。省略しても切断として 'error' には来るが、
               // ECONNRESET(socket hang up)に化けて中断理由が失われる。
               aborted = new Error('レスポンスサイズが上限を超えました');
               req.destroy(aborted);
             }
           });
+          // 本文の途中で接続が切れると 'end' は来ない。req の 'error' も、応答が
+          // 始まった後は発火しないことがあるため、ここで受けないと待ち続けてしまう。
+          const interrupted = (err?: Error): void => {
+            reject(
+              aborted ??
+                new NetworkError(
+                  `応答の受信中に接続が切れました${err ? ` (${networkDetail(err)})` : ''}`
+                )
+            );
+          };
+          res.on('error', interrupted);
+          res.on('close', () => {
+            if (!res.complete) {
+              interrupted();
+            }
+          });
           res.on('end', () => {
+            const data = Buffer.concat(chunks).toString('utf8');
             const status = res.statusCode ?? 0;
             if (status >= 200 && status < 300) {
               try {
@@ -346,27 +368,4 @@ function limit(
   scopeName?: string
 ): UsageLimit {
   return { label, shortLabel, utilization, resetsAt, primary, active, scopeName };
-}
-
-/**
- * Retry-After ヘッダ(秒数 or HTTP-date)をミリ秒へ変換する。
- * 解釈できなければ undefined を返し、呼び出し側の既定バックオフに委ねる。
- */
-function parseRetryAfter(
-  value: string | string[] | undefined
-): number | undefined {
-  const raw = Array.isArray(value) ? value[0] : value;
-  if (!raw) {
-    return undefined;
-  }
-  const trimmed = raw.trim();
-  if (/^\d+$/.test(trimmed)) {
-    return Number(trimmed) * 1000;
-  }
-  const dateMs = Date.parse(trimmed);
-  if (!Number.isNaN(dateMs)) {
-    const diff = dateMs - Date.now();
-    return diff > 0 ? diff : 0;
-  }
-  return undefined;
 }

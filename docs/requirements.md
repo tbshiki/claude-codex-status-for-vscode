@@ -56,7 +56,10 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 ### 3.3 共通の非機能要件
 
 - 両データソースとも「取得できない/失敗した場合は直近の正常値を保持しつつエラー状態を明示」する設計とする(表示が消えたり例外でクラッシュしない)
-- ポーリング間隔は設定可能(デフォルト60秒程度)とし、429エラー回避のため下限値(例: 30秒)を設ける
+- ポーリング間隔は設定可能(既定300秒)とし、429エラー回避のため下限(60秒)を設ける。上限は86400秒とし、数値でない値は既定値として扱う(`setInterval` は約24.8日を超える値や NaN を 1ms として扱うため)
+- 429 を受けたら、`Retry-After`(30秒〜1時間に丸める)か指数バックオフ(60秒から、上限15分)の時間だけ待ち、明けた時点でそのプロバイダだけ再取得する。待機中は定期取得でも送らない
+- 同じプロバイダへの取得は重ねて送らない(取得中に次の取得が重なったら相乗りする)。監視の停止・再開では、再開したプロバイダだけを取得する
+- 応答は 1MB までで打ち切る。本文の途中で接続が切れた場合は接続不可として扱い、待ち続けない
 - 複数ウィンドウ/複数ワークスペースで同時にAPIを叩き過ぎない配慮(将来的にはキャッシュファイル共有も検討)
 
 ## 4. 機能要件
@@ -67,7 +70,8 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 - プロバイダごとにON/OFFを設定で切り替え可能
 - 監視を停止したプロバイダはステータスバーから消す。全プロバイダが停止した場合のみ、一時停止アイコンだけの最小表示へ畳む。この最小表示は再開用のホバー先を残すためのもので、クリックで全プロバイダの監視を再開する
 - 設定でOFFにしたプロバイダは再開対象ではないため、全プロバイダがOFFの場合は最小表示も出さない(バーから完全に消す)
-- 利用率に応じた色分け(例: 80%以上で警告色)は将来検討(v1では白黒テキストでも可)
+- 残量がしきい値(既定: 警告30%、危険10%)を下回った枠にはアイコンを付け、そのプロバイダの項目の文字色を黄/赤にする(色は `statusBarAlertColors` で無効にできる)
+- リセットまでの残り時間など時刻に依存する表示は、取得とは別に1分ごとに描き直す
 
 ### 4.2 ツールチップ
 
@@ -86,6 +90,11 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 | `claudeCodexStatus.refresh` | Claude & Codex: 今すぐ更新 | 両プロバイダを即時再取得 |
 | `claudeCodexStatus.refreshClaude` | Claude & Codex: Claudeのみ更新 | Claudeのみ再取得 |
 | `claudeCodexStatus.refreshCodex` | Claude & Codex: Codexのみ更新 | Codexのみ再取得 |
+| `claudeCodexStatus.toggleClaudeMonitoring` | Claude & Codex: Claude自動監視を停止／再開 | Claude の監視を停止・再開。再開時は Claude だけ取得 |
+| `claudeCodexStatus.toggleCodexMonitoring` | Claude & Codex: Codex自動監視を停止／再開 | Codex の監視を停止・再開。再開時は Codex だけ取得 |
+| `claudeCodexStatus.toggleDisplayMode` | Claude & Codex: 残量表示／使用率表示を切替 | `displayMode` を切り替える |
+| `claudeCodexStatus.toggleAlertColors` | Claude & Codex: ステータスバーの警告色を有効／無効 | `statusBarAlertColors` を切り替える |
+| `claudeCodexStatus.showRawUsage` | Claude & Codex: 生の使用状況を表示(診断) | Claude の使用状況 API の応答を Output パネルに出す |
 | `claudeCodexStatus.resumeAllMonitoring` | (パレット非表示) | 全プロバイダの監視を再開。全停止時の最小表示のクリック先 |
 | `claudeCodexStatus.checkForUpdates` | Claude & Codex: アップデートを確認 | GitHub Releases の最新版をすぐ確認する(4.6)。最新のときも結果を知らせる。拡張機能ビューのこの拡張機能の右クリック(歯車)メニューにも出す |
 
@@ -93,7 +102,7 @@ Claude Code と OpenAI Codex CLI を併用していると、レートリミッ�
 
 ```jsonc
 {
-  "claudeCodexStatus.pollIntervalSeconds": 60,
+  "claudeCodexStatus.pollIntervalSeconds": 300, // 下限 60、上限 86400
   "claudeCodexStatus.providers.claude": true,
   "claudeCodexStatus.providers.codex": true,
   "claudeCodexStatus.claude.credentialsPath": "",

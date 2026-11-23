@@ -83,6 +83,19 @@ const DEFAULT_INTERVAL_SEC = 300;
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_CAP_MS = 15 * 60_000;
 /**
+ * Retry-After を使うときの下限と上限。0 や極端に短い値でそのまま再取得すると連打になり、
+ * 極端に長い値ではいつまでも戻らないため、この範囲へ丸める。
+ */
+const RETRY_AFTER_MIN_MS = 30_000;
+const RETRY_AFTER_MAX_MS = 60 * 60_000;
+/** バックオフ明けの再取得を、明ける時刻より少しだけ後ろへずらす余裕。 */
+const RETRY_MARGIN_MS = 500;
+/**
+ * 取得とは別に、表示だけを描き直す間隔。リセットまでの残り時間(verbose / orca の本文と
+ * ホバー)は描画した時点の値なので、取得の間も古くならないよう1分ごとに描き直す。
+ */
+const RERENDER_INTERVAL_MS = 60_000;
+/**
  * 手動更新の最小間隔。手動はバックオフを無視して再取得できるため、
  * 連打してもこの間隔以下ではリクエストを送らないことで負荷を抑える。
  */
@@ -118,7 +131,12 @@ export class StatusBarManager {
   private readonly monitoringEnabled = new Map<ProviderId, boolean>();
   private readonly backoff = new Map<ProviderId, { until: number; failures: number }>();
   private readonly lastManualAttempt = new Map<ProviderId, number>();
+  /** バックオフが明ける時刻に再取得するためのタイマー(プロバイダごと)。 */
+  private readonly retryTimers = new Map<ProviderId, NodeJS.Timeout>();
+  /** 取得中の処理。同じプロバイダへ重ねて送らないよう、実行中のものに相乗りする。 */
+  private readonly inFlight = new Map<ProviderId, Promise<void>>();
   private pollTimer: NodeJS.Timeout | undefined;
+  private renderTimer: NodeJS.Timeout | undefined;
   /**
    * 表示モードのメモリ上の現在値。undefined なら設定値に従う。
    * トグルは設定保存の成否に依存させず、まずこの値で即時切替する。
@@ -210,46 +228,113 @@ export class StatusBarManager {
 
   /** 全プロバイダの監視を再開する。全停止時の最小表示のクリックから呼ぶ。 */
   resumeAllMonitoring(): void {
-    for (const p of this.providers) {
+    const resumed = this.providers.filter((p) => !this.isMonitoringEnabled(p.id));
+    for (const p of resumed) {
       this.monitoringEnabled.set(p.id, true);
     }
-    this.restartPolling();
+    this.syncPollTimer();
     this.render();
+    // 再開したプロバイダだけ取得する(もともと監視中のものは次の定期取得に任せる)。
+    for (const p of resumed) {
+      void this.refresh(p.id);
+    }
   }
 
   start(): void {
     this.render();
     this.restartPolling();
+    this.renderTimer = setInterval(() => this.render(), RERENDER_INTERVAL_MS);
   }
 
   dispose(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
+    this.stopPollTimer();
+    if (this.renderTimer) {
+      clearInterval(this.renderTimer);
+      this.renderTimer = undefined;
     }
+    for (const timer of this.retryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.retryTimers.clear();
     this.disposeItems();
   }
 
-  /** 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。 */
+  /**
+   * 設定変更時に呼ぶ。間隔と有効プロバイダを反映して再始動する。
+   * 監視中の全プロバイダをすぐ取得するため、監視の停止・再開のような
+   * 「タイマーの要否が変わるだけ」の場面では使わない(syncPollTimer を使う)。
+   */
   restartPolling(): void {
+    this.stopPollTimer();
+    if (!this.anyMonitoring()) {
+      return;
+    }
+    void this.refreshAll();
+    this.startPollTimer();
+  }
+
+  private anyMonitoring(): boolean {
+    return this.providers.some((p) => this.isMonitoringEnabled(p.id));
+  }
+
+  private startPollTimer(): void {
+    const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
+    const intervalSec = toIntervalSec(cfg.get<unknown>('pollIntervalSeconds'));
+    this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
+  }
+
+  private stopPollTimer(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
-    if (!this.providers.some((p) => this.isMonitoringEnabled(p.id))) {
-      return;
-    }
-    const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
-    const intervalSec = toIntervalSec(cfg.get<unknown>('pollIntervalSeconds'));
-    void this.refreshAll();
-    this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
   }
 
-  /** 指定プロバイダの自動監視だけを停止・再開する。 */
+  /** 監視中のプロバイダの有無に合わせて、定期取得のタイマーだけを動かす・止める(取得はしない)。 */
+  private syncPollTimer(): void {
+    if (!this.anyMonitoring()) {
+      this.stopPollTimer();
+    } else if (!this.pollTimer) {
+      this.startPollTimer();
+    }
+  }
+
+  /**
+   * 指定プロバイダの自動監視だけを停止・再開する。
+   * 再開したときは、そのプロバイダだけを取得する。停止したときは何も取得しない
+   * (切り替えのたびに他方まで取得すると、連続操作で 429 を招く)。
+   */
   toggleProviderMonitoring(id: ProviderId): void {
-    this.monitoringEnabled.set(id, !this.isMonitoringEnabled(id));
-    this.restartPolling();
+    const next = !this.isMonitoringEnabled(id);
+    this.monitoringEnabled.set(id, next);
+    if (!next) {
+      this.clearRetryTimer(id);
+    }
+    this.syncPollTimer();
     this.render();
+    if (next) {
+      void this.refresh(id);
+    }
+  }
+
+  /** バックオフが明ける時刻に、そのプロバイダだけ再取得する。定期取得の間隔を待たない。 */
+  private scheduleRetry(id: ProviderId, delayMs: number): void {
+    this.clearRetryTimer(id);
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(id);
+      if (this.isMonitoringEnabled(id)) {
+        void this.refresh(id);
+      }
+    }, delayMs + RETRY_MARGIN_MS);
+    this.retryTimers.set(id, timer);
+  }
+
+  private clearRetryTimer(id: ProviderId): void {
+    const timer = this.retryTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this.retryTimers.delete(id);
+    }
   }
 
   /** 表示設定(style 等)だけが変わったとき、再取得せずに描画し直す。 */
@@ -348,7 +433,10 @@ export class StatusBarManager {
     const targets = this.enabledProviders().filter(
       (p) => (!id && (manual || this.isMonitoringEnabled(p.id))) || (id && p.id === id)
     );
-    await Promise.all(targets.map((p) => this.refreshOne(p, manual)));
+    // 終わったものから描画する(片方の応答が遅くても、もう片方の表示を待たせない)。
+    await Promise.all(
+      targets.map((p) => this.refreshOne(p, manual).then(() => this.render()))
+    );
     this.render();
   }
 
@@ -356,7 +444,20 @@ export class StatusBarManager {
     await this.refresh();
   }
 
-  private async refreshOne(provider: UsageProvider, manual = false): Promise<void> {
+  private refreshOne(provider: UsageProvider, manual = false): Promise<void> {
+    // 取得中に次の取得(定期・手動・バックオフ明け)が重なったら、送らずに相乗りする。
+    const running = this.inFlight.get(provider.id);
+    if (running) {
+      return running;
+    }
+    const run = this.refreshOneNow(provider, manual).finally(() => {
+      this.inFlight.delete(provider.id);
+    });
+    this.inFlight.set(provider.id, run);
+    return run;
+  }
+
+  private async refreshOneNow(provider: UsageProvider, manual: boolean): Promise<void> {
     const prev = this.states.get(provider.id);
     const { usage: last, at: lastFetchedAt } = lastGood(prev);
     const now = Date.now();
@@ -365,6 +466,11 @@ export class StatusBarManager {
     // 手動更新だけは待機が長い場合の救済としてバックオフを突破できる。
     const b = this.backoff.get(provider.id);
     if (!manual && b && now < b.until) {
+      // 監視の再開や設定での再有効化のあとは、再取得の予約が無いことがある。
+      // ホバーで案内している時刻に再取得できるよう、無ければ予約し直す。
+      if (!this.retryTimers.has(provider.id) && this.isMonitoringEnabled(provider.id)) {
+        this.scheduleRetry(provider.id, b.until - now);
+      }
       this.states.set(provider.id, {
         kind: 'rateLimited',
         retryAt: b.until,
@@ -389,6 +495,8 @@ export class StatusBarManager {
       this.lastManualAttempt.set(provider.id, now);
     }
 
+    // ここから実際に送る。予約済みのバックオフ明けの再取得は不要になる。
+    this.clearRetryTimer(provider.id);
     try {
       const usage = await provider.fetchUsage();
       this.backoff.delete(provider.id);
@@ -397,10 +505,14 @@ export class StatusBarManager {
       if (err instanceof RateLimitError) {
         const failures = (b?.failures ?? 0) + 1;
         const delay =
-          err.retryAfterMs ??
-          Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
+          err.retryAfterMs !== undefined
+            ? Math.max(RETRY_AFTER_MIN_MS, Math.min(RETRY_AFTER_MAX_MS, err.retryAfterMs))
+            : Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
         const until = Date.now() + delay;
         this.backoff.set(provider.id, { until, failures });
+        if (this.isMonitoringEnabled(provider.id)) {
+          this.scheduleRetry(provider.id, delay);
+        }
         this.states.set(provider.id, {
           kind: 'rateLimited',
           retryAt: until,
@@ -646,10 +758,12 @@ export class StatusBarManager {
         tooltip.appendMarkdown(`\n$(history) 最終取得 ${formatTime(state.fetchedAt)}`);
         break;
       case 'rateLimited': {
-        const secs = Math.max(0, Math.ceil((state.retryAt - Date.now()) / 1000));
+        // 残り秒数は描画した時点の値で古くなるため、再取得する時刻で示す。
+        const when = monitoring
+          ? `${formatTime(state.retryAt)} ごろに自動再取得`
+          : `${formatTime(state.retryAt)} ごろまで待機`;
         tooltip.appendMarkdown(
-          `\n\n$(clock) レート制限(429)中 — 約${secs}秒後に自動再取得` +
-            '(「更新」で今すぐ再試行)'
+          `\n\n$(clock) レート制限(429)中 — ${when}` + '(「更新」で今すぐ再試行)'
         );
         appendLastKnown(tooltip, state.last, state.lastFetchedAt, mode, thresholds);
         break;
