@@ -73,6 +73,12 @@ interface AuthPresentation {
 const PAUSED_ICON = '$(debug-pause)';
 
 const MIN_INTERVAL_SEC = 60;
+/**
+ * 取得間隔の上限(24時間)。setInterval は約24.8日(2^31-1 ms)を超える値や NaN を
+ * 1ms として扱うため、上限と型の確認が無いと、設定値しだいで API を連打してしまう。
+ */
+const MAX_INTERVAL_SEC = 24 * 60 * 60;
+const DEFAULT_INTERVAL_SEC = 300;
 /** 429 バックオフの基準(初回)と上限。Retry-After があればそちらを優先。 */
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_CAP_MS = 15 * 60_000;
@@ -234,10 +240,7 @@ export class StatusBarManager {
       return;
     }
     const cfg = vscode.workspace.getConfiguration('claudeCodexStatus');
-    const intervalSec = Math.max(
-      MIN_INTERVAL_SEC,
-      cfg.get<number>('pollIntervalSeconds', 300)
-    );
+    const intervalSec = toIntervalSec(cfg.get<unknown>('pollIntervalSeconds'));
     void this.refreshAll();
     this.pollTimer = setInterval(() => void this.refreshAll(), intervalSec * 1000);
   }
@@ -772,6 +775,14 @@ function formatResetCompact(resetsAt: string | null): string {
     return `${days}d ${hours}h`;
   }
   return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+}
+
+/** 設定の取得間隔(秒)を下限〜上限へ収める。数値でなければ既定値にする。 */
+function toIntervalSec(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_INTERVAL_SEC;
+  }
+  return Math.max(MIN_INTERVAL_SEC, Math.min(MAX_INTERVAL_SEC, value));
 }
 
 function toDisplayStyle(value: string | undefined): DisplayStyle {
