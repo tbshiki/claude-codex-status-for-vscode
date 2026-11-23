@@ -170,7 +170,7 @@ Marketplace に公開していないため、VSCode の自動更新は効かな�
 
 - TypeScript + VSCode Extension API
 - ビルド: `tsc` + `@vscode/vsce`
-- テスト: 最低限のユニットテスト(データ取得・パース処理部分)を想定、VSCode API本体のE2Eテストは任意
+- テスト: `npm test` で `test/` のテストを `node:test` で実行する。データ取得・正規化、取得のタイミング(監視の切替、429 後の再取得、取得間隔)、表示文字列、版の比較を対象にし、VSCode API は代役で差し替える。VSCode API本体のE2Eテストは任意
 - CI: GitHub Actions でのビルド確認(将来的にリリース自動化も検討)
 
 ## 7. マイルストーン(案)
