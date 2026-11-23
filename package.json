@@ -2,7 +2,7 @@
   "name": "claude-codex-status",
   "displayName": "Claude & Codex Status",
   "description": "Claude Code と OpenAI Codex CLI のレート残量(5時間枠/週枠)をVSCodeのステータスバーに常時表示します",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -113,10 +113,29 @@
           "type": "string",
           "enum": [
             "minimal",
-            "verbose"
+            "verbose",
+            "orca"
+          ],
+          "enumDescriptions": [
+            "枠の名前とパーセントだけを表示します(例: 5h : 62%)。",
+            "リセットまでの残り時間も表示します(例: 5h : 62% (2時間17分後))。",
+            "Orca のステータスバーに合わせた表示にします(例: 使用済み ▰▰▱▱▱ 33% 2h 17m · 94% 27m · 37% Fable)。先頭の見出しは displayMode に応じて「残り」または「使用済み」になります。"
           ],
           "default": "minimal",
-          "description": "ステータスバーの表示スタイル。minimal はパーセントのみ、verbose はリセット残り時間も表示します。"
+          "description": "ステータスバーの表示スタイル。"
+        },
+        "claudeCodexStatus.statusBarAlignment": {
+          "type": "string",
+          "enum": [
+            "right",
+            "left"
+          ],
+          "enumDescriptions": [
+            "ステータスバーの右側に表示します。",
+            "ステータスバーの左側に表示します。"
+          ],
+          "default": "right",
+          "description": "ステータスバーのどちら側に表示するか。変更はすぐに反映されます。"
         },
         "claudeCodexStatus.displayMode": {
           "type": "string",

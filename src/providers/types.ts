@@ -22,6 +22,11 @@ export interface UsageLimit {
   utilization: number;
   /** ISO8601 文字列、または不明・未設定の場合は null。 */
   resetsAt: string | null;
+  /**
+   * モデル別など、対象を絞った枠の対象名(例: "Fable")。全体の枠では省略する。
+   * 枠の名前を出さない書式(orca)で、どの枠かを示すために使う。
+   */
+  scopeName?: string;
   /** 主要枠(セッション/週全体)。バーに常時表示する。 */
   primary: boolean;
   /** 消費が始まっている等、現在有効な枠か(バー表示の判断に使う)。 */
